@@ -4924,6 +4924,29 @@ function loadPix(url) {
   });
 }
 
+// 批量取图：限制并发（4 路）。30 张卡一次性并发打 30 个 /api/card-img，
+// 冷启动时容易撞上边缘的并发/超时，表现就是「图全没了」。失败重试一次。
+async function loadPixBatch(urls, conc) {
+  const out = new Array(urls.length).fill(null);
+  let next = 0;
+  async function worker() {
+    while (next < urls.length) {
+      const i = next++;
+      let img = await loadPix(urls[i]);
+      if (!img && urls[i].indexOf("/api/card-img") === 0) {
+        await new Promise(function (r) { setTimeout(r, 250); });
+        img = await loadPix(urls[i]);
+      }
+      out[i] = img;
+    }
+  }
+  const lanes = Math.min(conc || 4, urls.length);
+  const pool = [];
+  for (let k = 0; k < lanes; k++) pool.push(worker());
+  await Promise.all(pool);
+  return out;
+}
+
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -5058,7 +5081,7 @@ async function renderDeckPosterBlob(entries) {
   // 卡牌网格
   const gridTop = PAD + HEAD + CURVE;
   const urls = entries.map(function (e) { return posterImgUrl(e.card); });
-  const pix = await Promise.all(urls.map(loadPix));
+  const pix = await loadPixBatch(urls, 6);
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];

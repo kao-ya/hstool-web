@@ -2758,19 +2758,27 @@
 
 .kw-tip {
   position: fixed; z-index: 100000;
-  max-width: 286px; padding: 8px 11px;
+  max-width: 286px; padding: 9px 12px;
   border-radius: 10px;
-  background: rgba(20, 16, 22, 0.97);
-  border: 1px solid rgba(197, 148, 61, 0.35);
+  /* 亮色主题：浅底深字（原来写死了深底 + var(--text)，亮色下就是黑糊糊一坨） */
+  background: rgba(253, 251, 247, 0.985);
+  border: 1px solid rgba(122, 92, 50, 0.28);
   color: var(--text);
   font-size: 12.5px; line-height: 1.6;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 12px 30px rgba(58, 44, 28, 0.18);
   opacity: 0; transform: translateY(4px);
   pointer-events: none;
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
 .kw-tip.show { opacity: 1; transform: none; }
-.kw-tip-name { display: block; font-weight: 700; color: var(--primary-hi); margin-bottom: 2px; }
+.kw-tip-name { display: block; font-weight: 700; color: var(--primary); margin-bottom: 2px; }
+body.dark-mode .kw-tip {
+  background: rgba(22, 17, 24, 0.985);
+  border-color: rgba(197, 148, 61, 0.4);
+  color: #f2e7d5;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+}
+body.dark-mode .kw-tip-name { color: var(--gold-light); }
 
 .deck-runes {
   display: flex; align-items: center; gap: 6px;
@@ -2778,15 +2786,20 @@
 }
 .rune-pill {
   font-size: 11px; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(122, 92, 50, 0.26);
+  background: rgba(122, 92, 50, 0.06);
   color: var(--text);
 }
-.rune-blood { border-color: rgba(200, 72, 64, 0.6); color: #f0a9a4; }
-.rune-frost { border-color: rgba(74, 144, 217, 0.6); color: #a8cdf2; }
-.rune-unholy { border-color: rgba(106, 176, 76, 0.6); color: #b6dfa4; }
-.rune-zero { opacity: 0.5; }
+.rune-blood { border-color: rgba(179, 56, 47, 0.5); color: #a93229; }
+.rune-frost { border-color: rgba(43, 108, 176, 0.5); color: #1f5c99; }
+.rune-unholy { border-color: rgba(74, 124, 47, 0.5); color: #3f6b28; }
+.rune-zero { opacity: 0.45; }
 .deck-rune-total { margin-left: auto; font-size: 11px; color: var(--muted); }
-.deck-rune-total.over { color: #ff8b80; font-weight: 700; }
+.deck-rune-total.over { color: #c0392b; font-weight: 700; }
+body.dark-mode .rune-pill { border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); }
+body.dark-mode .rune-blood { border-color: rgba(200, 72, 64, 0.6); color: #f0a9a4; }
+body.dark-mode .rune-frost { border-color: rgba(74, 144, 217, 0.6); color: #a8cdf2; }
+body.dark-mode .rune-unholy { border-color: rgba(106, 176, 76, 0.6); color: #b6dfa4; }
+body.dark-mode .deck-rune-total.over { color: #ff8b80; }
 
 body.no-border .kw-tip { border-color: transparent; }
