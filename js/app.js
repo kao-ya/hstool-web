@@ -752,24 +752,84 @@ const EXCLUDED_ATTACHED_NAMES = new Set([
 // ============================================================
 // 卡组张数上限（特殊卡改变上限）
 // ============================================================
-const DECK_LIMIT_CARDS = {
-  126055: 20,  // 裂魂者阿扎莉娜（逃离紫罗兰监狱）
-  79767: 40,   // 雷纳索尔王子（纳斯利亚堡的悬案）
-  119432: 40,  // 时空大盗拉法姆（穿越时间流）
-};
+// 规则表：一张「容量规则卡」可对应多个 card id / dbfId，命中即把整套牌的上限改成 size。
+//   · 威兹班 / 泽尔是「单卡套牌」（整副只有它自己）
+//   · 雷纳索尔在数据里有两个 dbfId（原版 + 核心重制版），两个都要认
+//   · 同一套牌里出现两种不同 size 即为冲突，提示用户先移除
+const DECK_SIZE_RULES = [
+  { ids: ["BOT_914", "DAL_800", "TOY_700"], dbfIds: [50477, 56047, 104819], size: 1,  name: "威兹班或泽尔" },
+  { ids: ["JAIL_430"],                      dbfIds: [126055],              size: 20, name: "裂魂者阿扎莉娜" },
+  { ids: ["REV_018"],                       dbfIds: [79767, 111689],       size: 40, name: "雷纳索尔王子" },
+  { ids: ["TIME_005"],                      dbfIds: [119432],              size: 40, name: "时空大盗拉法姆" },
+];
 
-// 上限冲突互斥：20 张卡与 40 张卡不能同时存在于卡组
-const LIMIT_CONFLICT_CARDS = {
-  126055: [79767, 119432],  // 阿扎莉娜 ↔ 雷纳索尔 / 拉法姆
-  79767: [126055],
-  119432: [126055],
-};
+// dbfId → 规则，用于 O(1) 命中
+const DECK_SIZE_BY_DBF = new Map();
+DECK_SIZE_RULES.forEach(r => r.dbfIds.forEach(d => DECK_SIZE_BY_DBF.set(d, r)));
 
-// 当前上限：20 张优先于 40 张（多卡冲突时取更严格的限制）
+// 卡牌命中的容量规则（没命中返回 null）。传 card 对象或 dbfId 都行。
+// 核心系列卡（CORE_ 前缀）按本体 id 认，否则会漏掉重制版。
+function deckSizeRuleOf(cardOrId) {
+  let card = cardOrId;
+  if (typeof card === "number") {
+    const direct = DECK_SIZE_BY_DBF.get(card);
+    if (direct) return direct;
+    const entry = deckState.cards.get(card);
+    card = (entry && entry.card) || cardCache.get(card);
+    if (!card) return null;
+  }
+  if (!card || typeof card !== "object") return null;
+  if (typeof card.dbfId === "number") {
+    const hit = DECK_SIZE_BY_DBF.get(card.dbfId);
+    if (hit) return hit;
+  }
+  const id = String(card.id || "").replace(/^CORE_/, "");
+  if (!id) return null;
+  for (const r of DECK_SIZE_RULES) {
+    if (r.ids.indexOf(id) >= 0) return r;
+  }
+  return null;
+}
+
+// 卡组内命中的全部规则（去重）
+function deckSizeRulesInDeck() {
+  const out = [];
+  deckState.cards.forEach(e => {
+    const r = deckSizeRuleOf(e.card);
+    if (r && out.indexOf(r) < 0) out.push(r);
+  });
+  return out;
+}
+
+// 当前上限：多张规则卡并存时取最严格（最小）的那个；没有规则卡 = 30 张
 function getDeckLimit() {
-  if (deckState.cards.has(126055)) return 20;
-  if (deckState.cards.has(79767) || deckState.cards.has(119432)) return 40;
-  return 30;
+  const sizes = deckSizeRulesInDeck().map(r => r.size);
+  return sizes.length ? Math.min.apply(null, sizes) : 30;
+}
+
+// 加入某张卡之前的上限冲突校验，返回提示文案（空串 = 放行）
+// 覆盖三种情况：单卡套牌独占、单卡套牌卡加入已有卡组、两种不同张数规则并存
+function deckSizeConflictMessage(card) {
+  const self = deckSizeRuleOf(card);
+  const rules = deckSizeRulesInDeck();
+  // 卡组里除了这张卡本身，还有没有别的卡
+  const hasOtherCards = Array.from(deckState.cards.values())
+    .some(e => !card || e.card.dbfId !== card.dbfId);
+
+  const single = rules.find(r => r.size === 1);
+  if (single && hasOtherCards && self !== single) {
+    return "「" + single.name + "」是单卡套牌，不能再加入其他卡牌";
+  }
+  if (!self) return "";
+  if (self.size === 1 && hasOtherCards) {
+    return "「" + self.name + "」需单独组成单卡套牌，请先移除其他卡牌";
+  }
+  const conflict = rules.find(r => r !== self && r.size !== self.size);
+  if (conflict) {
+    return "「" + self.name + "」要求 " + self.size + " 张构筑，与「" +
+      conflict.name + "」的 " + conflict.size + " 张要求冲突，请先移除该牌";
+  }
+  return "";
 }
 
 // 计入上限的总张数（奇闻卡附属 token 同样占用卡位）
@@ -866,6 +926,16 @@ function zilliaxDisplayCost(card) {
   return sum;
 }
 
+// 卡组行 / 法力曲线统一使用的「显示费用」
+// 奇利亚斯本体没有固定费用，实际法力值 = 已装配功能模块费用之和（未装配 = 0）；
+// 其余卡取卡面费用，无费用的 token / 英雄牌按 0 算，避免曲线出现 NaN 格。
+function deckDisplayCost(card) {
+  if (!card) return 0;
+  if (isZilliaxOwner(card.dbfId)) return zilliaxDisplayCost(card);
+  const c = card.cost;
+  return (typeof c === "number" && isFinite(c) && c > 0) ? c : 0;
+}
+
 // 奇利亚斯乐队卡分类：functional=功能模块 / cosmetic=外观模块
 function zilliaxModuleKind(card) {
   const name = card.name || "";
@@ -890,7 +960,7 @@ function canBeBandCard(card) {
     return { ok: false, reason: "奇闻卡不能加入乐队" };
   }
   // 卡组上限卡
-  if (DECK_LIMIT_CARDS[card.dbfId]) {
+  if (deckSizeRuleOf(card)) {
     return { ok: false, reason: "「" + card.name + "」不能加入乐队" };
   }
   // 对战开始时效果：只拦「对战开始时：」这类效果触发；
@@ -1065,6 +1135,7 @@ const DEFAULT_SETTINGS = {
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
   cardHoverZoom:      true,   // 悬停放大卡牌（OFF = 卡牌库网格悬停不再放大）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
+  signatureArt:       false,  // 异画卡图（ON = 有异画的卡改用签名版卡面，需联网）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
   compactMode:        false,  // 紧凑布局
@@ -1137,6 +1208,8 @@ function applySettings() {
   b.classList.toggle("card-hover-zoom", settings.cardHoverZoom);
   // 关闭「水晶颜色」时，所有法力水晶统一回退到基准蓝色（见 CSS .crystal-mono）
   b.classList.toggle("crystal-mono", !settings.crystalColor);
+  // 异画卡图：开启时按需拉索引（异步，不阻塞首屏）
+  if (settings.signatureArt) loadSignatureIndex();
   applyBgVisibility(settings.bgVisibility);
   saveSettings();
 }
@@ -1283,6 +1356,11 @@ document.querySelectorAll('input[data-setting][type="checkbox"]').forEach(inp =>
     updateBgVisDisabled();
     // 关掉「悬停预览」时，若预览正显示着，立刻收起，不用等鼠标移走
     if (!settings.hoverPreview) hideCardHoverPreview();
+    // 「异画卡图」：换图源后要重画一次，已渲染的 <img> 不会自己换
+    if (inp.dataset.setting === "signatureArt") {
+      if (settings.signatureArt) loadSignatureIndex().then(rerenderCardArt);
+      else rerenderCardArt();
+    }
   });
 });
 
@@ -2385,10 +2463,63 @@ function isNoArtType(cardOrId) {
   return NO_ART_TYPES.has(t);
 }
 
+// ------------------------------------------------------------
+// 异画（签名）卡图索引
+// ------------------------------------------------------------
+// 数据来自 data/cards-signatures.json（构卡脚本从 hearthstone.wiki.gg 抓的
+// 「Premium3」图，460 张），结构：{ cards: { 卡牌id: { dbfId, url } } }
+// 图片本身走同源代理 /api/hs-signature（wiki 有防盗链，直接热链会 403）
+const SIGNATURE_INDEX_URL = "data/cards-signatures.json";
+let signatureIndex = null;      // Map<cardId, {dbfId,url}>
+let signatureLoading = null;
+
+function loadSignatureIndex() {
+  if (signatureIndex) return Promise.resolve(signatureIndex);
+  if (signatureLoading) return signatureLoading;
+  signatureLoading = fetch(SIGNATURE_INDEX_URL, { cache: "force-cache" })
+    .then(r => (r.ok ? r.json() : null))
+    .then(j => {
+      if (!j || !j.cards) return null;
+      const m = new Map();
+      Object.keys(j.cards).forEach(k => m.set(k, j.cards[k]));
+      signatureIndex = m;
+      return m;
+    })
+    .catch(() => null)
+    .then(m => { signatureLoading = null; return m; });
+  return signatureLoading;
+}
+
+// 该卡有没有异画版（与设置无关，供 UI 判断是否显示入口）
+function hasSignatureArt(cardOrId) {
+  if (!signatureIndex) return false;
+  const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
+  return !!id && signatureIndex.has(id);
+}
+
+// 异画图 URL：只在设置开启且该卡有异画时返回，否则空串
+// size 与普通卡图一致（256x / 512x），转成代理的 w 参数走已裁好的缩略图
+function signatureImgUrl(cardOrId, size) {
+  if (!settings.signatureArt || !signatureIndex) return "";
+  const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
+  if (!id || !signatureIndex.has(id)) return "";
+  const w = size === "512x" ? 512 : (size === "1024x" ? 1024 : 256);
+  return "api/hs-signature?card=" + encodeURIComponent(id) + "&w=" + w;
+}
+
+// 切换「异画卡图」后，已经渲染出来的 <img> 不会自己换源，需要重画一次
+function rerenderCardArt() {
+  try { renderDeckCards(); } catch (_) {}
+  try { if (typeof doCardSearch === "function") doCardSearch(); } catch (_) {}
+}
+
 // 卡片主图 URL：天然无图的类型直接给本地占位卡背，零探测
 function cardImgUrl(cardOrId, size) {
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
   if (!id || isNoArtType(cardOrId)) return NO_CARD_IMG;
+  // 异画优先（设置开启 + 该卡有异画）
+  const sig = signatureImgUrl(cardOrId, size);
+  if (sig) return sig;
   return IMG_HOST + "zhCN/" + (size || "256x") + "/" + id + ".png";
 }
 function enCardImgUrl(cardId, size) {
@@ -2399,6 +2530,14 @@ function enCardImgUrl(cardId, size) {
 // 顶层函数声明（即挂在 window 上），详情弹窗的内联 onerror 属性也直接调用它。
 function cardImgErr(img, cardId, size) {
   const id = String(cardId || img.dataset.cardId || "");
+  // 异画图失败：先退回普通中文卡图。异画是可选增强，不能因为它把整张卡变成占位图。
+  const cur = img.dataset.src || img.getAttribute("src") || "";
+  if (cur.indexOf("hs-signature") >= 0) {
+    const normal = IMG_HOST + "zhCN/" + (size || "256x") + "/" + id + ".png";
+    if (img.dataset.src) img.dataset.src = normal;
+    img.src = normal;
+    return;
+  }
   if (!img.dataset.triedEn) {
     img.dataset.triedEn = "1";
     const en = enCardImgUrl(id, size);
@@ -2859,15 +2998,11 @@ async function addCardToDeck(card) {
     return;
   }
 
-  // 上限冲突卡互斥（20 张卡与 40 张卡不能共存）
-  const conflicts = LIMIT_CONFLICT_CARDS[dbfId];
-  if (conflicts) {
-    for (const otherId of conflicts) {
-      if (deckState.cards.has(otherId)) {
-        toast("「" + card.name + "」与卡组中已有的上限卡冲突，无法加入");
-        return;
-      }
-    }
+  // 容量规则冲突校验：单卡套牌独占 / 不同张数规则并存
+  const sizeConflict = deckSizeConflictMessage(card);
+  if (sizeConflict) {
+    toast(sizeConflict);
+    return;
   }
 
   // ========== 奇闻卡：先算出实际会新增的附属 token ==========
@@ -2883,9 +3018,10 @@ async function addCardToDeck(card) {
   }
   // ============================================================
 
-  // 卡组总张数上限：按加入这张卡后的上限校验（特殊卡会改变上限）
+  // 卡组总张数上限：按加入这张卡后的上限校验（这张卡自身可能就是规则卡）
   // 奇闻卡的附属 token 也占卡位，按实际会新增的 token 数预估
-  const limit = DECK_LIMIT_CARDS[dbfId] || getDeckLimit();
+  const selfRule = deckSizeRuleOf(card);
+  const limit = selfRule ? selfRule.size : getDeckLimit();
   if (getDeckTotalForLimit() + 1 + attachedToAdd.length > limit) {
     toast("卡组已达上限（" + limit + " 张），请先移除部分卡牌");
     return;
@@ -3046,9 +3182,9 @@ function renderManaCurve() {
 
   const counts = new Array(CURVE_BUCKETS).fill(0);
   deckState.cards.forEach(e => {
-    const raw = e.card.cost;
-    // 没有费用的卡（少数 token / 英雄牌）按 0 费算，避免出现 NaN 格子
-    const cost = (typeof raw === "number" && isFinite(raw) && raw > 0) ? raw : 0;
+    // 必须用「显示费用」而不是卡面费用：奇利亚斯本体卡面没有费用，
+    // 它的实际法力值来自装配的功能模块，二者不一致会导致曲线和卡组行对不上。
+    const cost = deckDisplayCost(e.card);
     const idx = Math.min(CURVE_BUCKETS - 1, Math.floor(cost));
     counts[idx] += e.count;
   });
@@ -3140,8 +3276,8 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
   badge.className = badgeCls;
   let badgeCost = (card.cost !== null && card.cost !== undefined) ? card.cost : "-";
   if (!isBand && isZilliaxOwner(card.dbfId)) {
-    // 奇利亚斯本体的法力值 = 其装配的功能模块费用之和
-    badgeCost = zilliaxDisplayCost(card);
+    // 奇利亚斯本体的法力值 = 其装配的功能模块费用之和（与法力曲线同一套算法）
+    badgeCost = deckDisplayCost(card);
   }
   badge.textContent = badgeCost;
 
