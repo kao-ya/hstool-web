@@ -415,7 +415,6 @@
   body.no-border .deck-hero-card,
   body.no-border .deck-list-header,
   body.no-border .deck-dust-bar,
-  body.no-border .deck-dust-bar-gold,
   body.no-border .deck-curve,
   body.no-border .deck-sidebar-footer,
   body.no-border .hero-selector-header { border-color: transparent; }
@@ -1733,18 +1732,25 @@
   .deck-dust-bar .value {
     font-family: "Consolas", monospace;
     font-weight: 700;
-    color: var(--gold);
+    color: var(--text);
     font-size: 14px;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0;
   }
-
-  /* 全金卡合成价：与普通粉尘同一块底板，只是数字换成金色并细分隔开 */
-  .deck-dust-bar-gold {
-    border-top: 1px dashed var(--border);
-    padding-top: 6px;
-    padding-bottom: 6px;
+  /* 普通 / 金色两个数字合并成一行：中间用淡分隔符，金色部分单独上色 */
+  .deck-dust-bar .value .dust-sep {
+    margin: 0 6px;
+    opacity: 0.35;
+    font-weight: 400;
   }
-  .deck-dust-bar-gold .value { color: #e8b84b; font-size: 13px; }
-  .deck-dust-bar-gold .label { font-weight: 500; font-size: 11.5px; }
+  .deck-dust-bar .value .dust-gold { color: var(--gold); }
+  .deck-dust-bar .label-sub {
+    font-weight: 500;
+    font-size: 10.5px;
+    opacity: 0.7;
+    letter-spacing: 0.02em;
+  }
 
   /* ============================================================
      法力曲线（侧栏，0-1-2 … 7+，共 8 档）
