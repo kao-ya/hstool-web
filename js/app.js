@@ -1325,6 +1325,11 @@ function switchTab(tabName) {
   document.getElementById("tab-preview").classList.toggle("hidden", tabName !== "preview");
   document.getElementById("tab-encode").classList.toggle("hidden", tabName !== "encode");
   document.getElementById("tab-decode").classList.toggle("hidden", tabName !== "decode");
+  document.getElementById("tab-finder").classList.toggle("hidden", tabName !== "finder");
+
+  if (tabName === "finder") {
+    initFinder();
+  }
 
   if (tabName === "preview") {
     if (!previewInitialized) {
@@ -3510,3 +3515,440 @@ function hideLoadingOverlay() {
   el.classList.add("done");
   setTimeout(() => { el.style.display = "none"; }, 400);
 }
+
+
+// ============================================================
+// 推荐页：对接 hstopdecks.com 公开接口
+//   GET /api/v1/find?dust=&class=&time=&complexity=&intent=&limit=
+//   GET /api/v1/meta
+// 对方接口目前的状态（实测）：参数校验分支正常，真正取数时成功分支
+// 常常一个字节都不回（HTTP 空回复），而且没开 CORS。
+// 所以这里统一做三件事：9 秒超时、失败给可读原因、原始 JSON 折叠兜底。
+// 字段名不硬编码：靠大小写/下划线无关的模糊匹配 + 兜底展开，对方改字段名也不会白屏。
+// ============================================================
+const FINDER_ORIGIN = "https://hstopdecks.com";
+const FINDER_PROXY_KEY = "hstool.finderProxy";
+const FINDER_TIMEOUT = 9000;
+const FINDER_NAME_KEYS = ["name", "title", "archetype", "deckname", "decktitle", "label"];
+const FINDER_CODE_KEYS = ["deckcode", "deckstring", "deckstrings", "deckcodebase64",
+                          "code", "code_string", "codestring"];
+let finderInited = false;
+let finderProxy = "";
+let finderDeckCodes = [];
+
+function finderProxyWrap(url) {
+  if (!finderProxy) return url;
+  if (finderProxy.indexOf("{url}") >= 0) {
+    return finderProxy.split("{url}").join(encodeURIComponent(url));
+  }
+  return finderProxy + encodeURIComponent(url);
+}
+
+function finderGetJson(pathAndQuery) {
+  const url = FINDER_ORIGIN + pathAndQuery;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => { ctrl.abort(); }, FINDER_TIMEOUT);
+  const t0 = Date.now();
+  return fetch(finderProxyWrap(url), {
+    signal: ctrl.signal,
+    cache: "no-store",
+    headers: { "Accept": "application/json" }
+  }).then(res => res.text().then(text => {
+    clearTimeout(timer);
+    let data = null;
+    if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+    return { ok: !!data, status: res.status, ms: Date.now() - t0, url: url, text: text, data: data, err: "" };
+  })).catch(e => {
+    clearTimeout(timer);
+    let msg;
+    if (e && e.name === "AbortError") {
+      msg = "等了 " + Math.round(FINDER_TIMEOUT / 1000) + " 秒没有任何响应，已放弃";
+    } else {
+      msg = "浏览器没能完成这次请求：" + ((e && e.message) || e);
+    }
+    return { ok: false, status: 0, ms: Date.now() - t0, url: url, text: "", data: null, err: msg };
+  });
+}
+
+function finderWhyFailed(r) {
+  if (r.err) {
+    return escapeHtml(r.err) +
+      "<br>常见原因：① 对方接口故障；② 对方没开 CORS，浏览器把跨域请求拦了；③ 你的网络访问该域名不稳。" +
+      "<br>如果确认是 ②，可在「代理设置」里填一个 CORS 代理前缀（只存本机）后再查。";
+  }
+  if (!r.text || !r.text.length) {
+    return "对方返回了 HTTP " + r.status + "，但<b>响应体是 0 字节</b>。" +
+      "<br>这正是该站 /api/v1/* 当前的已知故障：参数校验分支正常，真正取数时直接断流。" +
+      "这不是本工具的问题，等对方修好后这里会自动恢复。";
+  }
+  if (!r.data) {
+    return "对方返回的不是 JSON（HTTP " + r.status + "）。开头是：<br>" +
+      escapeHtml(r.text.slice(0, 180));
+  }
+  return "对方返回了 JSON，但没从中认出卡组结构（已原样展开在下面）。";
+}
+
+/* ---------- 字段无关的取值工具 ---------- */
+function finderNormKey(k) {
+  return String(k).toLowerCase().replace(/[\s_\-]/g, "");
+}
+
+function finderPick(obj, names) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return undefined;
+  const keys = Object.keys(obj);
+  for (let i = 0; i < names.length; i++) {
+    const want = finderNormKey(names[i]);
+    for (let j = 0; j < keys.length; j++) {
+      if (finderNormKey(keys[j]) !== want) continue;
+      const v = obj[keys[j]];
+      if (v === null || v === undefined || v === "" || typeof v === "object") continue;
+      return v;
+    }
+  }
+  return undefined;
+}
+
+function finderNum(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/[^0-9.\-]/g, ""));
+    return isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function finderPercent(v) {
+  const n = finderNum(v);
+  if (n === null) return "";
+  const p = (n > 0 && n <= 1) ? n * 100 : n;
+  return (Math.round(p * 10) / 10) + "%";
+}
+
+function finderDustText(v) {
+  const n = finderNum(v);
+  if (n === null) return "";
+  return Math.round(n).toLocaleString("zh-CN") + " 尘";
+}
+
+// 卡组代码可能是标准 base64（含 +/=）也可能是 base64url（含 -_），
+// 还常被外层字段包着换行/空格，所以先抹掉所有空白再判断。
+function finderCleanCode(v) {
+  if (typeof v !== "string") return "";
+  const s = v.replace(/\s+/g, "");
+  if (s.length < 20) return "";
+  if (!/^[A-Za-z0-9+/_\-]+={0,2}$/.test(s)) return "";
+  if (s.indexOf("=") < 0 && s.length < 44) return "";
+  return s;
+}
+
+function finderLooksLikeCode(v) {
+  return finderCleanCode(v) !== "";
+}
+
+function finderWalk(node, depth, out) {
+  if (!node || typeof node !== "object" || depth > 7) return;
+  if (Array.isArray(node)) {
+    const n = Math.min(node.length, 120);
+    for (let i = 0; i < n; i++) finderWalk(node[i], depth + 1, out);
+    return;
+  }
+  out.push(node);
+  const keys = Object.keys(node);
+  for (let i = 0; i < keys.length; i++) {
+    const v = node[keys[i]];
+    if (v && typeof v === "object") finderWalk(v, depth + 1, out);
+  }
+}
+
+function finderExtractDecks(data) {
+  const objs = [];
+  finderWalk(data, 0, objs);
+  const out = [];
+  const seen = {};
+  for (let i = 0; i < objs.length; i++) {
+    const o = objs[i];
+    const name = finderPick(o, FINDER_NAME_KEYS);
+    const codeRaw = finderPick(o, FINDER_CODE_KEYS);
+    const code = finderCleanCode(codeRaw);
+    const wr = finderPick(o, ["winrate", "winratepercent", "wins", "winratio"]);
+    const cls = finderPick(o, ["class", "classname", "playerclass", "heroclass", "hero"]);
+    const dust = finderPick(o, ["dust", "dustcost", "dustrequired", "craftcost", "dustvalue"]);
+    if (!name) continue;
+    // 只有名字、其它字段一个都没有的对象当噪声丢掉
+    if (!code && wr === undefined && cls === undefined && dust === undefined) continue;
+    const key = String(name) + "|" + code;
+    if (seen[key]) continue;
+    seen[key] = 1;
+    out.push({ raw: o, name: name ? String(name) : "(对方未命名)", code: code, winrate: wr });
+  }
+  return out;
+}
+
+/* ---------- 渲染 ---------- */
+function finderChip(label, val, ok) {
+  if (val === undefined || val === null || val === "") return "";
+  return '<span class="finder-chip' + (ok ? " ok" : "") + '">' +
+    escapeHtml(String(label)) + " " + escapeHtml(String(val)) + "</span>";
+}
+
+function finderRawBlock(data) {
+  if (data === null || data === undefined) return "";
+  let txt;
+  try { txt = JSON.stringify(data, null, 2); } catch (e) { txt = String(data); }
+  const cut = txt.length > 20000;
+  if (cut) txt = txt.slice(0, 20000) + "\n…（已截断）";
+  return '<details class="finder-raw"><summary>原始 JSON（' + txt.length + " 字符）</summary><pre>" +
+    escapeHtml(txt) + "</pre></details>";
+}
+
+function finderSrcLine(r) {
+  return '<div class="finder-src">来源 ' + escapeHtml(r.url) +
+    "　HTTP " + r.status + "　" + r.ms + " ms" +
+    (finderProxy ? "　（经代理）" : "") + "</div>";
+}
+
+function finderDeckCard(d, idx) {
+  const o = d.raw;
+  const cls = finderPick(o, ["class", "classname", "playerclass", "heroclass", "hero"]);
+  const dust = finderDustText(finderPick(o, ["dust", "dustcost", "dustrequired", "craftcost", "dustvalue"]));
+  const tier = finderPick(o, ["tier", "tierlabel", "tiername", "grade", "rank"]);
+  const sample = finderPick(o, ["samplesize", "samples", "games", "matches", "sample", "n"]);
+  const wr = finderPercent(d.winrate);
+
+  let html = '<div class="finder-deck">';
+  html += '<div class="finder-deck-head">';
+  html += '<span class="finder-deck-name">' + escapeHtml(d.name) + "</span>";
+  html += finderChip("职业", cls);
+  html += finderChip("梯度", tier);
+  html += finderChip("粉尘", dust);
+  html += finderChip("胜率", wr, true);
+  html += finderChip("样本", sample);
+  html += "</div>";
+
+  if (d.code) {
+    html += '<div class="finder-code"><code>' + escapeHtml(d.code) + "</code>";
+    html += '<button class="btn btn-ghost" data-finder-action="copy" data-idx="' + idx + '">复制</button>';
+    html += '<button class="btn btn-success" data-finder-action="import" data-idx="' + idx + '">导入组卡器</button>';
+    html += "</div>";
+  } else {
+    html += '<div class="finder-src">这套对方没给卡组代码，只能看下面的原始字段。</div>';
+  }
+  html += "</div>";
+  return html;
+}
+
+function finderRenderDecks(list, box, r) {
+  finderDeckCodes = [];
+  let html = finderSrcLine(r);
+  for (let i = 0; i < list.length; i++) {
+    finderDeckCodes.push(list[i].code || "");
+    html += finderDeckCard(list[i], i);
+  }
+  html += finderRawBlock(r.data);
+  box.innerHTML = html;
+}
+
+function finderValueText(v) {
+  if (v === null || v === undefined) return '<span style="color:var(--muted-light)">—</span>';
+  if (typeof v === "object") {
+    try { return escapeHtml(JSON.stringify(v)); } catch (e) { return "…"; }
+  }
+  return escapeHtml(String(v));
+}
+
+function finderTable(rows) {
+  const cols = [];
+  const probe = Math.min(rows.length, 5);
+  for (let i = 0; i < probe; i++) {
+    const ks = Object.keys(rows[i]);
+    for (let j = 0; j < ks.length; j++) {
+      if (cols.indexOf(ks[j]) < 0 && cols.length < 8) cols.push(ks[j]);
+    }
+  }
+  let html = '<table class="finder-tbl"><thead><tr>';
+  for (let i = 0; i < cols.length; i++) html += "<th>" + escapeHtml(cols[i]) + "</th>";
+  html += "</tr></thead><tbody>";
+  const n = Math.min(rows.length, 60);
+  for (let i = 0; i < n; i++) {
+    html += "<tr>";
+    for (let j = 0; j < cols.length; j++) html += "<td>" + finderValueText(rows[i][cols[j]]) + "</td>";
+    html += "</tr>";
+  }
+  html += "</tbody></table>";
+  if (rows.length > n) {
+    html += '<div class="finder-src">只显示前 ' + n + " 行，共 " + rows.length + " 行</div>";
+  }
+  return html;
+}
+
+function finderAutoBody(data) {
+  if (data === null || data === undefined) {
+    return '<div class="empty-state">对方返回了空内容</div>';
+  }
+  if (Array.isArray(data)) {
+    if (!data.length) return '<div class="empty-state">空数组</div>';
+    const objs = data.filter(x => x && typeof x === "object" && !Array.isArray(x));
+    if (objs.length === data.length) return finderTable(objs);
+    let html = '<dl class="finder-kv">';
+    const n = Math.min(data.length, 60);
+    for (let i = 0; i < n; i++) {
+      html += "<dt>#" + (i + 1) + "</dt><dd>" + finderValueText(data[i]) + "</dd>";
+    }
+    html += "</dl>";
+    return html;
+  }
+  if (typeof data === "object") {
+    const keys = Object.keys(data);
+    let html = "";
+    const flat = keys.filter(k => !data[k] || typeof data[k] !== "object");
+    if (flat.length) {
+      html += '<dl class="finder-kv">';
+      for (let i = 0; i < flat.length; i++) {
+        html += "<dt>" + escapeHtml(flat[i]) + "</dt><dd>" + finderValueText(data[flat[i]]) + "</dd>";
+      }
+      html += "</dl>";
+    }
+    const nested = keys.filter(k => data[k] && typeof data[k] === "object");
+    for (let i = 0; i < nested.length; i++) {
+      const v = data[nested[i]];
+      html += '<div class="finder-sub"><div class="finder-sub-title">' + escapeHtml(nested[i]) +
+        "</div>" + finderAutoBody(v) + "</div>";
+    }
+    return html || '<div class="empty-state">对象是空的</div>';
+  }
+  return '<dl class="finder-kv"><dt>值</dt><dd>' + finderValueText(data) + "</dd></dl>";
+}
+
+function finderRenderAuto(data, box, r) {
+  box.innerHTML = finderSrcLine(r) + finderAutoBody(data) + finderRawBlock(data);
+}
+
+function finderErrorBox(r) {
+  return '<div class="finder-err">' + finderWhyFailed(r) + "</div>" +
+    '<div class="actions" style="margin-top:0;">' +
+    '<a class="btn btn-ghost" href="' + escapeHtml(r.url) + '" rel="noopener">在新窗口打开该接口</a>' +
+    "</div>" + finderSrcLine(r);
+}
+
+/* ---------- 交互 ---------- */
+async function finderRunFind() {
+  const box = document.getElementById("finderResult");
+  const st = document.getElementById("finderStatus");
+  const params = new URLSearchParams();
+  params.set("dust", document.getElementById("findDust").value);
+  const pairs = [
+    ["class", "findClass"],
+    ["time", "findTime"],
+    ["complexity", "findComplexity"],
+    ["intent", "findIntent"],
+    ["limit", "findLimit"]
+  ];
+  for (let i = 0; i < pairs.length; i++) {
+    const v = document.getElementById(pairs[i][1]).value;
+    if (v && v !== "any") params.set(pairs[i][0], v);
+  }
+  const path = "/api/v1/find?" + params.toString();
+  st.textContent = "查询中…";
+  box.innerHTML = '<div class="empty-state">正在请求 ' + escapeHtml(path) + " …</div>";
+  const r = await finderGetJson(path);
+  if (!r.data) {
+    st.textContent = "失败（" + r.ms + " ms）";
+    box.innerHTML = finderErrorBox(r);
+    return;
+  }
+  const decks = finderExtractDecks(r.data);
+  if (decks.length) {
+    st.textContent = "回来 " + decks.length + " 套 · " + r.ms + " ms";
+    finderRenderDecks(decks, box, r);
+  } else {
+    st.textContent = "回来了，但没认出卡组结构 · " + r.ms + " ms";
+    finderRenderAuto(r.data, box, r);
+  }
+}
+
+async function finderRunMeta() {
+  const box = document.getElementById("finderMeta");
+  const st = document.getElementById("finderMetaStatus");
+  st.textContent = "获取中…";
+  box.innerHTML = '<div class="empty-state">正在请求 /api/v1/meta …</div>';
+  const r = await finderGetJson("/api/v1/meta");
+  if (!r.data) {
+    st.textContent = "失败（" + r.ms + " ms）";
+    box.innerHTML = finderErrorBox(r);
+    return;
+  }
+  st.textContent = "已获取 · " + r.ms + " ms";
+  const decks = finderExtractDecks(r.data);
+  if (decks.length) finderRenderDecks(decks, box, r);
+  else finderRenderAuto(r.data, box, r);
+}
+
+async function finderImportToDeck(code) {
+  try {
+    toast("正在解码卡组代码…");
+    const r = await api("/api/decode", { content: code });
+    await importToDeckBuilder(r.heroes_lines, r.cards_lines, r.format, r.sideboard_pairs);
+    switchTab("preview");
+    toast("已导入到组卡器");
+  } catch (e) {
+    toast("导入失败：" + friendlyError(e));
+  }
+}
+
+function finderLoadProxy() {
+  try {
+    finderProxy = localStorage.getItem(FINDER_PROXY_KEY) || "";
+  } catch (e) {
+    finderProxy = "";
+  }
+  const inp = document.getElementById("finderProxy");
+  if (inp) inp.value = finderProxy;
+}
+
+function initFinder() {
+  if (finderInited) return;
+  finderInited = true;
+  finderLoadProxy();
+
+  const btnFind = document.getElementById("btnFind");
+  const btnMeta = document.getElementById("btnFindMeta");
+  const btnProxy = document.getElementById("btnFinderProxy");
+  const proxyRow = document.getElementById("finderProxyRow");
+  const btnProxySave = document.getElementById("btnFinderProxySave");
+  const box = document.getElementById("finderResult");
+
+  if (btnFind) btnFind.addEventListener("click", finderRunFind);
+  if (btnMeta) btnMeta.addEventListener("click", finderRunMeta);
+
+  if (btnProxy && proxyRow) {
+    btnProxy.addEventListener("click", () => {
+      proxyRow.style.display = proxyRow.style.display === "none" ? "" : "none";
+    });
+  }
+  if (btnProxySave) {
+    btnProxySave.addEventListener("click", () => {
+      const inp = document.getElementById("finderProxy");
+      const v = (inp && inp.value ? inp.value : "").trim();
+      finderProxy = v;
+      try {
+        if (v) localStorage.setItem(FINDER_PROXY_KEY, v);
+        else localStorage.removeItem(FINDER_PROXY_KEY);
+      } catch (e) { /* 隐私模式下写不了，忽略 */ }
+      toast(v ? "代理已保存" : "代理已清空");
+    });
+  }
+
+  if (box) {
+    box.addEventListener("click", ev => {
+      const btn = ev.target.closest ? ev.target.closest("[data-finder-action]") : null;
+      if (!btn) return;
+      const idx = parseInt(btn.getAttribute("data-idx"), 10);
+      const code = finderDeckCodes[idx] || "";
+      if (!code) return;
+      const act = btn.getAttribute("data-finder-action");
+      if (act === "copy") copyText(code);
+      else if (act === "import") finderImportToDeck(code);
+    });
+  }
+}
+

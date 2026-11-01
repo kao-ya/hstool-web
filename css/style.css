@@ -2435,3 +2435,125 @@
     border-radius: 4px;
     z-index: 2;
   }
+
+  /* ============================================================
+     推荐页（对接 hstopdecks.com 公开接口）
+     ============================================================ */
+  .finder-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .finder-field { display: flex; flex-direction: column; gap: 6px; }
+  .finder-label { font-size: 12px; color: var(--muted); }
+  .finder-field select,
+  .finder-proxy-row input {
+    height: 36px;
+    padding: 0 10px;
+    border-radius: var(--shape-sm, 10px);
+    border: 1px solid var(--border);
+    background: var(--inner);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .finder-field select:focus-visible,
+  .finder-proxy-row input:focus-visible {
+    outline: none;
+    border-color: var(--border-hi);
+    box-shadow: 0 0 0 3px var(--hint-bg);
+  }
+  .finder-proxy-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .finder-proxy-row input { flex: 1; min-width: 0; }
+
+  .finder-result { display: flex; flex-direction: column; gap: 12px; }
+
+  .finder-deck {
+    border: 1px solid var(--border);
+    border-radius: var(--shape-lg, 14px);
+    padding: 12px;
+    background: var(--inner);
+  }
+  .finder-deck-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .finder-deck-name { font-weight: 700; font-size: 14px; color: var(--text); }
+  .finder-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--hint-bg);
+    color: var(--hint-fg);
+    white-space: nowrap;
+  }
+  .finder-chip.ok { background: rgba(74, 124, 89, 0.16); color: var(--success); }
+
+  .finder-code { display: flex; gap: 8px; align-items: center; }
+  .finder-code code {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    font-family: ui-monospace, Consolas, monospace;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(122, 92, 50, 0.07);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .finder-code .btn { flex-shrink: 0; }
+
+  .finder-src {
+    font-size: 11px;
+    color: var(--muted-light);
+    word-break: break-all;
+    line-height: 1.5;
+  }
+  .finder-err {
+    border-left: 3px solid var(--error);
+    background: var(--error-container);
+    color: var(--on-error-container);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .finder-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .finder-tbl th,
+  .finder-tbl td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    word-break: break-all;
+  }
+  .finder-tbl th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+
+  .finder-kv {
+    display: grid;
+    grid-template-columns: minmax(90px, 180px) 1fr;
+    gap: 4px 12px;
+    font-size: 12px;
+    margin: 0;
+  }
+  .finder-kv dt { color: var(--muted); word-break: break-all; }
+  .finder-kv dd { margin: 0; color: var(--text); word-break: break-all; }
+
+  .finder-sub { margin-top: 10px; }
+  .finder-sub-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+
+  .finder-raw { font-size: 12px; }
+  .finder-raw summary { cursor: pointer; color: var(--muted); }
+  .finder-raw pre {
+    margin: 8px 0 0;
+    padding: 10px;
+    border-radius: 8px;
+    background: rgba(122, 92, 50, 0.07);
+    max-height: 320px;
+    overflow: auto;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
