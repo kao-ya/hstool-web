@@ -5,9 +5,11 @@
 ![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)
 ![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
-![No Build](https://img.shields.io/badge/build-none-brightgreen)
+![Static](https://img.shields.io/badge/static_site-no_build_step-brightgreen)
 ![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+
+纯静态 · 无构建步骤 · 无依赖 · 无后端
 
 把完整卡牌数据库交给浏览器，所有查询、编解码、渲染都在本地完成 —— 没有服务器，没有接口，没有等待。
 
@@ -146,6 +148,7 @@ php -S localhost:8000           # 需要 PHP
 ```
 .
 ├── index.html                          # 页面外壳（结构）
+├── LICENSE                             # MIT 许可证全文
 ├── css/
 │   └── style.css                       # 全部样式（MD3 设计变量 + 主题开关）
 ├── js/
@@ -283,6 +286,14 @@ https://api.hearthstonejson.com/v1/latest/zhCN/cards.json              # 全量�
 - [Cloudflare Pages](https://pages.cloudflare.com/) —— 静态托管
 - [Blizzard Entertainment](https://www.blizzard.com/) —— 炉石传说
 
-本项目为**非官方**粉丝作品，与 Blizzard Entertainment 无任何关联。仅供学习与交流，不得用于商业用途。炉石传说及其相关素材版权归 Blizzard Entertainment 所有。
+本项目为**非官方**粉丝作品，与 Blizzard Entertainment 无任何关联。
 
-代码部分以 MIT 许可发布。
+### 许可证
+
+| 对象 | 授权 |
+| --- | --- |
+| 本项目源代码（`index.html`、`css/`、`js/`） | **MIT**，全文见 [LICENSE](./LICENSE) |
+| 卡牌数据（`data/*.json`） | 来自 [HearthstoneJSON](https://hearthstonejson.com/)，遵循其原始条款 |
+| 卡图、`Belwe.ttf`、Blizzard 相关素材 | 版权归 Blizzard Entertainment，**不在 MIT 覆盖范围内**，不得商用 |
+
+MIT 只授予你使用、修改、分发本项目**代码**的权利；素材版权未随之转移。
