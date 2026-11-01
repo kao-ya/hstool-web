@@ -3959,6 +3959,7 @@ function initFinder() {
   }
 
   initHsLibrary();
+  hsEnhanceSelects();
 }
 
 /* ============================================================
@@ -3970,6 +3971,8 @@ var HS_PROXY = "/api/hs-decks";
 var HS_TIMEOUT = 25000;
 var hsIndexList = [];
 var hsInited = false;
+var hsClassValue = "";
+var HS_CLASSES = ["死亡骑士", "恶魔猎手", "德鲁伊", "猎人", "法师", "圣骑士", "牧师", "潜行者", "萨满祭司", "术士", "战士"];
 
 async function hsGet(qs) {
   var ctrl = new AbortController();
@@ -4010,9 +4013,8 @@ function hsRenderList() {
   var box = document.getElementById("hsList");
   var st = document.getElementById("hsStatus");
   if (!box) return;
-  var clsSel = document.getElementById("hsClass");
   var qInput = document.getElementById("hsSearch");
-  var cls = clsSel ? clsSel.value : "";
+  var cls = hsClassValue;
   var q = qInput ? qInput.value.trim().toLowerCase() : "";
 
   var list = hsIndexList;
@@ -4081,16 +4083,159 @@ async function hsImportDeck(slug, btn) {
   }
 }
 
+/* 自绘下拉框：复刻卡牌库筛选器那套 .filter-dd 组件（按钮 + 面板 + 勾选 + 清除），单选 */
+function hsCreateDropdown(opts) {
+  var options = opts.options || [];
+  var state = { value: opts.value === undefined ? (options.length ? options[0][0] : "") : opts.value };
+
+  var dd = document.createElement("div");
+  dd.className = "filter-dd" + (opts.className ? " " + opts.className : "");
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "filter-dd-btn";
+  btn.setAttribute("aria-haspopup", "true");
+  btn.setAttribute("aria-expanded", "false");
+  if (opts.label) btn.setAttribute("title", opts.label);
+  btn.innerHTML = '<span class="dd-label"></span><span class="dd-caret">▼</span>';
+  var menu = document.createElement("div");
+  menu.className = "filter-dd-menu";
+  menu.setAttribute("role", "menu");
+
+  function textOf(v) {
+    for (var i = 0; i < options.length; i++) if (options[i][0] === v) return options[i][1];
+    return options.length ? options[0][1] : "";
+  }
+
+  function paintBtn() {
+    var lb = btn.querySelector(".dd-label");
+    if (lb) lb.textContent = textOf(state.value);
+    var base = options.length ? options[0][0] : "";
+    btn.classList.toggle("has-value", state.value !== base);
+  }
+
+  function paintMenu() {
+    var html = "";
+    if (opts.label) html += '<div class="menu-group-title">' + escapeHtml(opts.label) + "</div>";
+    for (var i = 0; i < options.length; i++) {
+      var v = options[i][0], t = options[i][1], on = v === state.value;
+      html += '<button type="button" class="menu-item" role="menuitemradio" aria-checked="' + (on ? "true" : "false") +
+        '" data-dd-value="' + escapeHtml(String(v)) + '"><span>' + escapeHtml(t) + "</span>" +
+        (on ? '<span class="menu-item-check">✓</span>' : "") + "</button>";
+    }
+    if (opts.clearLabel) {
+      var base = options.length ? options[0][0] : "";
+      html += '<button type="button" class="menu-clear" data-dd-clear="1"' + (state.value !== base ? "" : " hidden") + ">" + escapeHtml(opts.clearLabel) + "</button>";
+    }
+    menu.innerHTML = html;
+  }
+
+  function close() {
+    menu.classList.remove("show");
+    btn.setAttribute("aria-expanded", "false");
+  }
+
+  function pick(v) {
+    if (v === state.value) return close();
+    state.value = v;
+    paintBtn();
+    close();
+    if (opts.onPick) opts.onPick(v);
+  }
+
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (menu.classList.contains("show")) return close();
+    paintMenu();
+    menu.classList.add("show");
+    btn.setAttribute("aria-expanded", "true");
+  });
+
+  menu.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var t = e.target;
+    var item = t && t.closest ? t.closest("[data-dd-value]") : null;
+    if (item) return pick(item.getAttribute("data-dd-value"));
+    var clr = t && t.closest ? t.closest("[data-dd-clear]") : null;
+    if (clr) pick(options.length ? options[0][0] : "");
+  });
+
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+
+  dd.appendChild(btn);
+  dd.appendChild(menu);
+  if (opts.mount) opts.mount.appendChild(dd);
+  paintBtn();
+  paintMenu();
+  dd.hsSync = function (v) { state.value = v; paintBtn(); paintMenu(); };
+  return dd;
+}
+
+/* 外部卡组库：职业筛选下拉（自绘） */
+function hsBuildClassDropdown() {
+  var wrap = document.getElementById("hsDropdowns");
+  if (!wrap || wrap.dataset.init) return;
+  wrap.dataset.init = "1";
+  wrap.innerHTML = "";
+  var options = [["", "全部职业"]];
+  for (var i = 0; i < HS_CLASSES.length; i++) options.push([HS_CLASSES[i], HS_CLASSES[i]]);
+  hsCreateDropdown({
+    mount: wrap,
+    label: "职业",
+    options: options,
+    value: hsClassValue,
+    clearLabel: "清除职业筛选",
+    onPick: function (v) {
+      hsClassValue = v;
+      if (hsIndexList.length) hsRenderList();
+      else if (v) hsLoadIndex();
+    }
+  });
+}
+
+/* 推荐页的原生 <select> 换成同一套自绘下拉：select 只留作取值容器，既有读取逻辑完全不变 */
+function hsEnhanceSelects() {
+  var form = document.querySelector("#tab-finder .finder-form");
+  if (!form) return;
+  var sels = form.querySelectorAll("select");
+  for (var i = 0; i < sels.length; i++) {
+    (function (sel) {
+      if (sel.dataset.ddDone) return;
+      sel.dataset.ddDone = "1";
+      var options = [];
+      for (var j = 0; j < sel.options.length; j++) {
+        options.push([sel.options[j].value, (sel.options[j].textContent || "").trim()]);
+      }
+      var host = document.createElement("div");
+      host.className = "filter-dd-host";
+      sel.parentNode.insertBefore(host, sel.nextSibling);
+      sel.style.display = "none";
+      sel.setAttribute("tabindex", "-1");
+      sel.setAttribute("aria-hidden", "true");
+      hsCreateDropdown({
+        mount: host,
+        label: "",
+        options: options,
+        value: sel.value,
+        onPick: function (v) {
+          sel.value = v;
+          sel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+    })(sels[i]);
+  }
+}
+
 function initHsLibrary() {
   if (hsInited) return;
   hsInited = true;
   var btn = document.getElementById("btnHsLoad");
   var box = document.getElementById("hsList");
-  var clsSel = document.getElementById("hsClass");
   var qInput = document.getElementById("hsSearch");
 
+  hsBuildClassDropdown();
+
   if (btn) btn.addEventListener("click", hsLoadIndex);
-  if (clsSel) clsSel.addEventListener("change", function () { if (hsIndexList.length) hsRenderList(); });
   if (qInput) {
     qInput.addEventListener("input", function () {
       if (!hsIndexList.length) return;

@@ -304,32 +304,14 @@
         <span class="card-title">外部卡组库</span>
         <span class="card-subtitle" id="hsStatus">未加载</span>
       </div>
-      <div class="finder-form" style="margin-bottom:10px;">
-        <label class="finder-field">
-          <span class="finder-label">职业</span>
-          <select id="hsClass">
-            <option value="">全部职业</option>
-            <option value="死亡骑士">死亡骑士</option>
-            <option value="恶魔猎手">恶魔猎手</option>
-            <option value="德鲁伊">德鲁伊</option>
-            <option value="猎人">猎人</option>
-            <option value="法师">法师</option>
-            <option value="圣骑士">圣骑士</option>
-            <option value="牧师">牧师</option>
-            <option value="潜行者">潜行者</option>
-            <option value="萨满祭司">萨满祭司</option>
-            <option value="术士">术士</option>
-            <option value="战士">战士</option>
-          </select>
-        </label>
-        <label class="finder-field">
-          <span class="finder-label">名称筛选</span>
-          <input type="text" id="hsSearch" placeholder="如 控制牧 / 快攻">
-        </label>
-        <label class="finder-field">
-          <span class="finder-label">&nbsp;</span>
-          <button class="btn btn-primary" id="btnHsLoad">加载卡组库</button>
-        </label>
+      <div class="search-bar" style="margin-bottom:10px;">
+        <input type="text" id="hsSearch" placeholder="按卡组名筛选，例如 控制牧 / 快攻 / 奥弹…">
+      </div>
+      <div class="filter-tags" style="margin-bottom:12px;">
+        <div class="filter-dropdowns" id="hsDropdowns"></div>
+      </div>
+      <div style="margin:0 0 12px;">
+        <button class="btn btn-primary" id="btnHsLoad">加载卡组库</button>
       </div>
       <div class="hint" style="margin:0 0 10px;">
         <span class="hint-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4.5 12.3c.6.5 1 1.4 1 2.3h7c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></span>

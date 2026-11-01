@@ -2557,3 +2557,28 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
+
+  /* ===== 推荐页：用卡牌库那套自绘下拉替换原生 select（select 只留作取值容器） ===== */
+  .finder-field .filter-dd-host { display: block; width: 100%; }
+  .finder-field .filter-dd { display: flex; width: 100%; }
+  .finder-field .filter-dd-btn {
+    width: 100%;
+    height: 36px;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-radius: var(--shape-sm, 10px);
+    font-size: 14px;
+    font-weight: 400;
+    background: var(--inner);
+  }
+  .finder-field .filter-dd-btn .dd-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .finder-field .filter-dd-btn.has-value { color: var(--primary); }
+  .finder-field .filter-dd-menu { min-width: 100%; max-width: 340px; }
+
+  /* 外部卡组库：搜索框与下拉的间距微调 */
+  #tab-finder .search-bar input { height: 38px; }
+  #hsDropdowns { min-height: 30px; }
