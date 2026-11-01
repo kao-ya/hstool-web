@@ -4716,20 +4716,89 @@ function lookupKeyword(raw) {
   return "";
 }
 
-// 卡牌文本 → 安全 HTML：只保留 <b></b><i></i>，其余尖括号全部转义，
-// 并把命中关键词的 <b> 打上 data-kw 供悬浮解释使用（B10 的同类问题一并堵住）
+// ---------- 关键词识别（按词切，而不是按 <b> 整段查表）----------
+// 卡面里的关键词有两种存在形式，旧实现只认第一种、而且要求整段就是一个关键词：
+//   ① 数据自带加粗：<b>战吼</b>、<b>嘲讽，战吼：</b>  ← 后者一段挤了多个关键词，查表必然失败
+//   ② 完全没加粗：如「亡语：将三张奥术飞弹置入你的手牌。」「冲锋」
+// 于是「嘲讽，战吼：」这种卡两个词全丢（用户报的就是这个）。现在统一用关键词正则逐词切分。
+let kwRegexCache = null;
+let kwKeyByBase = null;
+
+// 关键词表的 key 可能带占位后缀（法术伤害+2 / 法力渴求（X）），匹配时只取基础词
+function keywordBase(k) {
+  return String(k).replace(/[（(][^)）]*[)）]/g, "").replace(/[+＋]\s*\d+/g, "").trim();
+}
+
+function keywordRegex() {
+  if (kwRegexCache) return kwRegexCache;
+  const map = new Map();
+  for (const key of Object.keys(KEYWORD_DEFS)) {
+    const base = keywordBase(key);
+    if (!base) continue;
+    // 同一个基础词有多条（如「过载」「过载：（X）」）时保留最短的 key，作为 data-kw
+    if (!map.has(base) || key.length < map.get(base).length) map.set(base, key);
+  }
+  kwKeyByBase = map;
+  // 长词优先，避免「冰霜法术」被「冰霜」抢先切碎
+  const alts = [...map.keys()].sort((a, b) => b.length - a.length)
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  kwRegexCache = new RegExp("(" + alts.join("|") + ")", "g");
+  return kwRegexCache;
+}
+
+// 纯文本里误伤职业名/卡名的兜底：命中词前后紧邻这些字时不加浮层
+// 潜行者（职业）、微型机器人（卡名）、动物伙伴（卡名）
+const KW_BLOCK_CONTEXT = {
+  "潜行": { after: ["者"] },
+  "微型": { after: ["机"] },
+  "伙伴": { before: ["动物"] },
+};
+
+function kwBlocked(base, before, after) {
+  const rule = KW_BLOCK_CONTEXT[base];
+  if (!rule) return false;
+  if (rule.after && rule.after.some((s) => after.startsWith(s))) return true;
+  if (rule.before && rule.before.some((s) => before.endsWith(s))) return true;
+  return false;
+}
+
+function kwSpan(base, text) {
+  const key = (kwKeyByBase && kwKeyByBase.get(base)) || base;
+  return '<b class="kw" data-kw="' + escapeHtml(key) + '">' + text + "</b>";
+}
+
+// 把一段「已转义的纯文本」里的关键词逐个包成浮层；context 用于误伤判断
+function wrapKeywordsInPlain(escaped, beforeCtx, afterCtx) {
+  const re = keywordRegex();
+  re.lastIndex = 0;
+  return escaped.replace(re, function (m, _g1, offset, whole) {
+    const before = (offset > 0 ? whole.slice(Math.max(0, offset - 2), offset) : "") + (beforeCtx || "");
+    const after = (whole.slice(offset + m.length, offset + m.length + 2) || "") + (afterCtx || "");
+    if (kwBlocked(m, before, after)) return m;
+    return kwSpan(m, m);
+  });
+}
+
+// 卡牌文本 → 安全 HTML：只保留 <b></b><i></i>，其余尖括号全部转义；
+// <b> 里的内容逐个关键词包装（一段多个关键词也能全部命中），<i>（风味文字）不处理
 function renderCardTextHtml(text) {
   const src = String(text || "");
   const parts = src.split(/(<\/?(?:b|i)>)/i);
-  let html = "";
+  const out = [];
+  let bold = false, italic = false;
   for (const part of parts) {
-    if (/^<\/?(?:b|i)>$/i.test(part)) html += part.toLowerCase();
-    else html += escapeHtml(part);
+    if (!part) continue;
+    if (/^<b>$/i.test(part)) { bold = true; out.push("<b>"); continue; }
+    if (/^<\/b>$/i.test(part)) { bold = false; out.push("</b>"); continue; }
+    if (/^<i>$/i.test(part)) { italic = true; out.push("<i>"); continue; }
+    if (/^<\/i>$/i.test(part)) { italic = false; out.push("</i>"); continue; }
+    const esc = escapeHtml(part);
+    if (italic) { out.push(esc); continue; }          // 风味文字不加浮层
+    if (bold) out.push(wrapKeywordsInPlain(esc, "", ""));   // 数据里标了加粗 → 一定按关键词处理
+    else out.push(wrapKeywordsInPlain(esc, "", ""));        // 没加粗也照样识别（如「冲锋」独立成句）
   }
-  return html.replace(/<b>([^<]{1,14})<\/b>/g, function (m, inner) {
-    if (!lookupKeyword(inner)) return m;
-    return '<b class="kw" data-kw="' + escapeHtml(inner.trim()) + '">' + inner + "</b>";
-  });
+  // <b> 里如果没能拆出关键词，就退化成普通加粗（保持原有视觉效果）
+  return out.join("").replace(/<b><\/b>/g, "");
 }
 
 let kwTipEl = null;
