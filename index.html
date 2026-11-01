@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#241a12">
+<title>HsTool</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='18' y='8' width='64' height='84' rx='12' fill='%23b8893a'/><rect x='30' y='24' width='40' height='52' rx='8' fill='%232e2119'/><path d='M30 42h40M30 56h26' stroke='%23f0c169' stroke-width='6' stroke-linecap='round'/></svg>">
+<!-- 无卡图时的占位卡背：约 29% 的卡在数据源里就没有图，提前预热避免加载时才现取 -->
+<link rel="preload" as="image" href="img/nocard.png">
+<link rel="stylesheet" href="css/style.css">
+<base target="_blank">
+</head>
+<body>
+
+<nav class="nav-bar">
+ <div class="nav-brand">
+    <div class="brand-logo"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13h6M7 16h4"/></svg></div>
+    <span class="brand-text">HsTool</span>
+  </div>
+
+  <div class="nav-tabs" id="navTabs">
+    <div class="tab-indicator" id="tabIndicator"></div>
+    <button class="nav-tab active" data-tab="preview">组卡器</button>
+    <button class="nav-tab" data-tab="decode">解码</button>
+    <button class="nav-tab" data-tab="encode">编码</button>
+  </div>
+
+    <div class="nav-right">
+    <button class="theme-toggle" id="themeToggle" title="切换日/夜模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <button class="theme-toggle" id="settingsToggle" title="设置" aria-label="打开设置"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <div class="status">
+      <span class="status-dot loading" id="statusDot"></span>
+      <span id="statusText">加载中…</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- ========== 组卡器页 ========== -->
+  <section id="tab-preview">
+    <div class="preview-page">
+      <div class="preview-main">
+        <div class="card search-panel" style="margin-bottom:14px;">
+          <div class="search-bar">
+            <input type="text" id="cardSearch" placeholder="搜索卡牌名称、描述或卡牌 ID...">
+          </div>
+          <!-- 筛选：第一行下拉框（可多选），第二行已选标签 -->
+          <div class="filter-tags" id="filterTags">
+            <div class="filter-dropdowns" id="filterDropdowns">
+              <button type="button" class="filter-clear-btn" id="filterClearBtn" style="display:none;">
+                清除全部
+              </button>
+            </div>
+            <div class="filter-tags-list" id="filterTagsList"></div>
+          </div>
+          <div id="cardCount" style="font-size:12px;color:var(--muted);">
+            输入关键词搜索卡牌
+          </div>
+        </div>
+
+        <div class="card card-plain" style="padding:14px;">
+          <div class="card-grid" id="cardGrid">
+            <div class="empty-state">搜索后显示卡牌列表</div>
+          </div>
+          <div class="pagination" id="pagination" style="display:none;"></div>
+        </div>
+      </div>
+
+      <aside class="deck-sidebar" id="deckSidebar">
+        <div class="deck-hero-card" id="deckHeroCard" onclick="openHeroSelector()">
+          <div class="hero-placeholder">
+            <div class="big-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg></div>
+            <div>点击选择英雄</div>
+          </div>
+          <div class="deck-name-label">
+            <span class="name" id="deckNameLabel">HsTool生成</span>
+            <span class="hint">点击更换</span>
+          </div>
+        </div>
+
+        <div class="deck-list-header">
+          <span class="title">卡组列表</span>
+          <span class="stats"><span class="num" id="deckStatsNum">0</span> / <span id="deckLimitNum">30</span></span>
+        </div>
+
+        <div class="band-mode-hint" id="bandModeHint" style="display:none;"></div>
+
+        <div class="deck-cards-list" id="deckCardsList">
+          <div class="deck-empty">
+            <span class="big-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13h6M7 16h4"/></svg></span>
+            从左侧卡牌预览页面<br>点击「+」添加到卡组
+          </div>
+        </div>
+
+        <div class="deck-dust-bar">
+          <span class="label"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M9.5 3L12 9l2.5-6M12 9v12"/></svg> 合成所需奥术之尘</span>
+          <span class="value" id="deckDustCost">0</span>
+        </div>
+
+        <div class="deck-sidebar-footer">
+          <div class="deck-config-mini">
+            <input type="text" id="deckHeroInput" placeholder="英雄名称 / DBF ID" readonly>
+            <select id="deckFormatSelect">
+              <option value="1">狂野</option>
+              <option value="2">标准</option>
+            </select>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-danger btn-clear" onclick="clearDeck()" title="清空"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg></button>
+            <button class="btn btn-import-mini" id="btnImportDeck" onclick="importDeckFromClipboard()" title="从剪贴板导入卡组代码"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> 导入</button>
+            <button class="btn btn-success btn-export-big" onclick="exportDeckToDecode()"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg> 导出</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ========== 编码页 ========== -->
+  <section id="tab-encode" class="hidden">
+    <div class="grid-2">
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+          <span class="card-title">英雄</span>
+          <span class="card-subtitle">每行一个，卡名或 DBF ID</span>
+        </div>
+        <textarea id="heroInput" rows="3"
+                  placeholder="例如：安度因·乌瑞恩(DBF 813)"></textarea>
+      </div>
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header"><span class="card-title">模式</span></div>
+        <div class="radio-group">
+          <label class="radio checked">
+            <input type="radio" name="format" value="1" checked>
+            <span class="dot"></span><span>狂野</span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="format" value="2">
+            <span class="dot"></span><span>标准</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="hint">
+        <span class="hint-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4.5 12.3c.6.5 1 1.4 1 2.3h7c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></span>
+        <span>每行一张卡：卡名或 DBF ID。修改卡牌时，直接改 <b>DBF ID</b> 即可（名称仅供参考，冲突时以 ID 为准）</span>
+      </div>
+      <div class="card-header">
+        <span class="card-title">卡牌列表</span>
+        <span class="card-subtitle">数量可写 x2 / × 2 / 空格 2，默认 1</span>
+      </div>
+      <textarea id="cardsInput" rows="10"
+                placeholder="例如：灵魂之火(DBF 974) × 2"></textarea>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="btnEncode"><svg class="icon icon-fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h7l-1 8 11-13h-8z"/></svg> 生成卡组代码</button>
+      <button class="btn btn-success" id="btnExport">导出官方格式</button>
+      <button class="btn btn-ghost" id="btnEncodeClear">清空</button>
+      <button class="btn btn-ghost" id="btnEncodeCopy">复制输出</button>
+      <button class="btn btn-ghost" id="btnEncodeExample">填入示例</button>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnEncodeToPreview">→ 转到组卡器</button>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">输出</span>
+        <span class="card-subtitle">卡组代码 / 官方格式</span>
+      </div>
+      <div class="output empty" id="encodeOutput">结果将显示在这里</div>
+    </div>
+  </section>
+
+  <!-- ========== 解码页 ========== -->
+  <section id="tab-decode" class="hidden">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">输入</span>
+        <span class="card-subtitle">粘贴卡组代码，或整段官方格式文本（自动识别）</span>
+      </div>
+      <textarea id="decodeInput" rows="7"
+                placeholder="在此粘贴卡组代码或官方格式文本..."></textarea>
+      <div class="hint" style="margin:10px 0 0;">
+        <span class="hint-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4.5 12.3c.6.5 1 1.4 1 2.3h7c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></span>
+        <span>卡组码要<b>完整</b>：首尾字符一个都不能少，缺字符会解码失败；粘贴官方格式文本也行，会自动识别</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="btnDecode"><svg class="icon icon-fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h7l-1 8 11-13h-8z"/></svg> 解码</button>
+      <button class="btn btn-ghost" id="btnDecodeClear">清空</button>
+      <button class="btn btn-ghost" id="btnDecodeCopy">复制结果</button>
+      <button class="btn btn-ghost" id="btnDecodeExample">填入示例</button>
+      <div class="spacer"></div>
+      <button class="btn btn-success" id="btnDecodeToEncode">→ 转到编码</button>
+      <button class="btn btn-ghost" id="btnDecodeToPreview">→ 转到组卡器</button>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">解码结果</span></div>
+      <div class="output empty" id="decodeOutput">结果将显示在这里</div>
+    </div>
+  </section>
+</div>
+
+<!-- 卡牌详情模态框 -->
+<div class="detail-modal" id="detailModal">
+  <div class="detail-modal-content">
+    <div style="display:flex;justify-content:flex-end;padding:8px 12px 0;">
+      <button class="close-btn" onclick="closeCardDetail()">×</button>
+    </div>
+    <div class="detail-modal-body" id="detailModalBody">
+      <div></div>
+      <div class="empty-state">点击卡牌查看详情</div>
+    </div>
+  </div>
+</div>
+
+<!-- 设置面板 -->
+<div class="settings-modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="settings-modal-content">
+    <div class="settings-modal-header">
+      <h3 id="settingsTitle">设置</h3>
+      <button class="close-btn" id="settingsClose" aria-label="关闭设置">×</button>
+    </div>
+    <!-- 分页栏：MD3 主标签样式（下划线指示条），与顶部导航栏同一套观感 -->
+    <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="设置分类">
+      <div class="settings-tab-indicator" id="settingsTabIndicator"></div>
+      <button class="settings-tab active" data-stab="settings" role="tab" aria-selected="true">设置</button>
+      <button class="settings-tab" data-stab="about" role="tab" aria-selected="false">关于</button>
+    </div>
+
+    <div class="settings-modal-body">
+
+      <!-- ① 设置：功能 / 布局 / 控件 -->
+      <div class="settings-pane" id="stab-settings" role="tabpanel">
+
+        <div class="settings-group-title">功能</div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">悬停预览</span>
+            <span class="settings-row-desc">在组卡器列表悬停卡牌时，侧边弹出卡图预览</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="hoverPreview">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">水晶颜色</span>
+            <span class="settings-row-desc">按稀有度给法力水晶着色；关闭后统一为蓝色</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="crystalColor">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-group-title">布局</div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">MD3 风格</span>
+            <span class="settings-row-desc">关闭后使用扁平化界面（小圆角、无阴影、无动效）</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="md3Style">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">紧凑布局</span>
+            <span class="settings-row-desc">缩小卡牌网格间距，单屏显示更多卡牌</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="compactMode">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">减弱动效</span>
+            <span class="settings-row-desc">关闭界面过渡动画，适合低性能设备或截图</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="reduceMotion">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">背景纯色</span>
+            <span class="settings-row-desc">开启后不显示背景图，改用纯色底</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="bgSolid">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row settings-row-slider" id="bgVisRow">
+          <div class="settings-row-label">
+            <span class="settings-row-title">背景可见度</span>
+            <span class="settings-row-desc">数值越高背景越清晰（默认 50）</span>
+          </div>
+          <div class="settings-slider-wrap">
+            <input type="range" id="bgVisibility" min="0" max="100" step="5" value="50" aria-label="背景可见度">
+            <span class="settings-slider-value" id="bgVisibilityValue">50</span>
+          </div>
+        </div>
+
+        <div class="settings-group-title">控件</div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">卡牌面板透明</span>
+            <span class="settings-row-desc">开启后卡牌面板与分页条半透明，透出背景</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="uiTransparent">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">搜索栏透明</span>
+            <span class="settings-row-desc">开启后顶部搜索与筛选区透出背景</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="searchTransparent">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">预览图背景透明</span>
+            <span class="settings-row-desc">开启后卡图加载期间不铺占位底板</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="previewTransparent">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">卡牌背景透明</span>
+            <span class="settings-row-desc">开启后卡面只留描边，透出背景</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="cardTransparent">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">去边框去线条</span>
+            <span class="settings-row-desc">隐藏界面上的描边与分隔线，只保留悬停/焦点的反馈</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="noBorder">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+      </div><!-- /stab-settings -->
+
+      <!-- ② 关于：项目信息 -->
+      <div class="settings-pane hidden" id="stab-about" role="tabpanel">
+
+        <div class="about-head">
+          <img class="about-logo" src="img/wawa.png" alt="HsTool 图标" onerror="this.style.display='none'">
+          <div class="about-head-text">
+            <div class="about-name">HsTool</div>
+            <div class="about-tagline">炉石传说卡牌查询与组卡工具</div>
+          </div>
+        </div>
+
+        <p class="about-desc">
+          HsTool 是一款<strong>免费开源</strong>的《炉石传说》卡牌工具。全部逻辑都跑在浏览器里，
+          不需要服务器即可运行：收录完整卡库，支持多维筛选、关键词搜索、卡组编解码与一键抄卡，
+          无广告、无追踪，也不改动任何游戏数据。
+        </p>
+
+        <div class="about-block">
+          <div class="about-label">作者</div>
+          <div class="about-chips">
+            <span class="about-chip">Kao-ya</span>
+          </div>
+        </div>
+
+        <div class="about-block">
+          <div class="about-label">贡献者</div>
+          <div class="about-chips">
+            <span class="about-chip">WorkBuddy</span>
+            <span class="about-chip">ChatGPT</span>
+            <span class="about-chip">Kimi</span>
+            <span class="about-chip">DeepSeek</span>
+            <span class="about-chip">DouBao</span>
+          </div>
+        </div>
+
+        <div class="about-block">
+          <div class="about-label">致谢</div>
+          <div class="about-chips">
+            <span class="about-chip">HearthstoneJSON</span>
+            <span class="about-chip">Cloudflare Pages</span>
+            <span class="about-chip">Blizzard Entertainment</span>
+          </div>
+        </div>
+
+        <!-- 链接待补：把 href="#" 换成真实地址并删掉 onclick 即可 -->
+        <div class="about-links">
+          <a class="about-link" href="#" onclick="return false">GitHub</a>
+          <a class="about-link" href="#" onclick="return false">问题反馈</a>
+        </div>
+
+      </div><!-- /stab-about -->
+
+    </div>
+  </div>
+</div>
+
+<!-- 英雄选择器 -->
+<div class="hero-selector-modal" id="heroSelectorModal">
+  <div class="hero-selector-content">
+    <div class="hero-selector-header">
+      <h3>选择英雄（11个职业）</h3>
+      <button class="close-btn" onclick="closeHeroSelector()">×</button>
+    </div>
+    <div class="hero-selector-body">
+      <div class="hero-grid" id="heroGrid">
+        <div class="empty-state">加载中…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全局卡牌悬浮预览 -->
+<div class="global-hover-preview" id="globalHoverPreview">
+  <img id="globalHoverImg" src="" alt="">
+</div>
+<!-- 全局加载遮罩 -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-box">
+    <div class="loading-ring"></div>
+    <div class="loading-title">正在加载卡牌数据…</div>
+    <div class="loading-sub" id="loadingSub">正在启动…</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
