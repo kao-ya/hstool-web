@@ -3957,5 +3957,153 @@ function initFinder() {
       else if (act === "import") finderImportToDeck(code);
     });
   }
+
+  initHsLibrary();
+}
+
+/* ============================================================
+ * 外部卡组库：经本站 Pages Function（/api/hs-decks）同源取数
+ * 对方 API 断流 + 无 CORS 头，浏览器直连必然失败；
+ * 这里改由服务端抓卡组详情页，再以同源 JSON 返回。
+ * ============================================================ */
+var HS_PROXY = "/api/hs-decks";
+var HS_TIMEOUT = 25000;
+var hsIndexList = [];
+var hsInited = false;
+
+async function hsGet(qs) {
+  var ctrl = new AbortController();
+  var timer = setTimeout(function () { ctrl.abort(); }, HS_TIMEOUT);
+  var res;
+  try {
+    res = await fetch(HS_PROXY + qs, { signal: ctrl.signal, headers: { accept: "application/json" } });
+  } catch (e) {
+    throw new Error("连不上本站后端（" + friendlyError(e) + "）");
+  } finally {
+    clearTimeout(timer);
+  }
+  var txt = await res.text();
+  var data = null;
+  try { data = JSON.parse(txt); } catch (e) { data = null; }
+  if (!data) {
+    if (res.status === 404) {
+      throw new Error("本站没有后端：/api/hs-decks 返回 404。本地静态预览没有 Functions，部署到 Cloudflare Pages 后才有。");
+    }
+    throw new Error("后端返回的不是 JSON（HTTP " + res.status + "）");
+  }
+  if (data.ok === false) throw new Error(data.hint || data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function hsChipsRow(d) {
+  var html = "";
+  html += finderChip("职业", d.cls);
+  html += finderChip("模式", d.format);
+  html += finderChip("梯度", d.tier);
+  html += finderChip("胜率", d.winrate === null || d.winrate === undefined ? "" : d.winrate + "%", true);
+  html += finderChip("样本", d.games ? d.games + " 局" : "");
+  html += finderChip("粉尘", d.dust ? d.dust : "");
+  return html;
+}
+
+function hsRenderList() {
+  var box = document.getElementById("hsList");
+  var st = document.getElementById("hsStatus");
+  if (!box) return;
+  var clsSel = document.getElementById("hsClass");
+  var qInput = document.getElementById("hsSearch");
+  var cls = clsSel ? clsSel.value : "";
+  var q = qInput ? qInput.value.trim().toLowerCase() : "";
+
+  var list = hsIndexList;
+  if (cls) list = list.filter(function (d) { return d.cls === cls; });
+  if (q) list = list.filter(function (d) { return d.name.toLowerCase().indexOf(q) >= 0; });
+
+  if (st) {
+    st.textContent = "共 " + hsIndexList.length + " 套，当前筛出 " + list.length + " 套";
+  }
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-state">没有符合条件的卡组</div>';
+    return;
+  }
+
+  var html = '<div class="finder-src">数据来自本站在服务端抓取的对方卡组页（不是对方的 API）</div>';
+  var n = Math.min(list.length, 120);
+  for (var i = 0; i < n; i++) {
+    var d = list[i];
+    html += '<div class="finder-deck">';
+    html += '<div class="finder-deck-head">';
+    html += '<span class="finder-deck-name">' + escapeHtml(d.name) + "</span>";
+    html += hsChipsRow(d);
+    html += '<button class="btn btn-success" data-hs-import="' + escapeHtml(d.slug) + '">导入组卡器</button>';
+    html += "</div></div>";
+  }
+  if (list.length > n) {
+    html += '<div class="finder-src">只列前 ' + n + " 套（共 " + list.length + " 套），用上面的筛选缩小范围</div>";
+  }
+  box.innerHTML = html;
+}
+
+async function hsLoadIndex() {
+  var box = document.getElementById("hsList");
+  var st = document.getElementById("hsStatus");
+  if (st) st.textContent = "正在取数…";
+  if (box) box.innerHTML = '<div class="empty-state">正在让后端去抓对方卡组列表，通常 5–10 秒…</div>';
+  try {
+    var data = await hsGet("?mode=index&limit=800");
+    hsIndexList = data.decks || [];
+    if (!hsIndexList.length) {
+      if (box) box.innerHTML = '<div class="empty-state">后端拿到页面但没解析出卡组</div>';
+      if (st) st.textContent = "0 套";
+      return;
+    }
+    hsRenderList();
+    toast("已加载 " + hsIndexList.length + " 套卡组");
+  } catch (e) {
+    if (st) st.textContent = "取数失败";
+    if (box) box.innerHTML = '<div class="empty-state">' + escapeHtml(friendlyError(e)) + "</div>";
+    toast("取数失败：" + friendlyError(e));
+  }
+}
+
+async function hsImportDeck(slug, btn) {
+  var old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "抓取中…"; }
+  try {
+    var data = await hsGet("?mode=deck&slug=" + encodeURIComponent(slug));
+    var deck = data.deck || {};
+    if (!deck.code) throw new Error("这套的详情页里没有卡组代码");
+    await finderImportToDeck(deck.code);
+  } catch (e) {
+    toast("导入失败：" + friendlyError(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+  }
+}
+
+function initHsLibrary() {
+  if (hsInited) return;
+  hsInited = true;
+  var btn = document.getElementById("btnHsLoad");
+  var box = document.getElementById("hsList");
+  var clsSel = document.getElementById("hsClass");
+  var qInput = document.getElementById("hsSearch");
+
+  if (btn) btn.addEventListener("click", hsLoadIndex);
+  if (clsSel) clsSel.addEventListener("change", function () { if (hsIndexList.length) hsRenderList(); });
+  if (qInput) {
+    qInput.addEventListener("input", function () {
+      if (!hsIndexList.length) return;
+      clearTimeout(qInput._t);
+      qInput._t = setTimeout(hsRenderList, 180);
+    });
+  }
+  if (box) {
+    box.addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-hs-import]") : null;
+      if (!b) return;
+      hsImportDeck(b.getAttribute("data-hs-import"), b);
+    });
+  }
 }
 

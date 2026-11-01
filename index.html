@@ -301,6 +301,47 @@
 
     <div class="card">
       <div class="card-header">
+        <span class="card-title">外部卡组库</span>
+        <span class="card-subtitle" id="hsStatus">未加载</span>
+      </div>
+      <div class="finder-form" style="margin-bottom:10px;">
+        <label class="finder-field">
+          <span class="finder-label">职业</span>
+          <select id="hsClass">
+            <option value="">全部职业</option>
+            <option value="死亡骑士">死亡骑士</option>
+            <option value="恶魔猎手">恶魔猎手</option>
+            <option value="德鲁伊">德鲁伊</option>
+            <option value="猎人">猎人</option>
+            <option value="法师">法师</option>
+            <option value="圣骑士">圣骑士</option>
+            <option value="牧师">牧师</option>
+            <option value="潜行者">潜行者</option>
+            <option value="萨满祭司">萨满祭司</option>
+            <option value="术士">术士</option>
+            <option value="战士">战士</option>
+          </select>
+        </label>
+        <label class="finder-field">
+          <span class="finder-label">名称筛选</span>
+          <input type="text" id="hsSearch" placeholder="如 控制牧 / 快攻">
+        </label>
+        <label class="finder-field">
+          <span class="finder-label">&nbsp;</span>
+          <button class="btn btn-primary" id="btnHsLoad">加载卡组库</button>
+        </label>
+      </div>
+      <div class="hint" style="margin:0 0 10px;">
+        <span class="hint-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4.5 12.3c.6.5 1 1.4 1 2.3h7c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></span>
+        <span>这条路<b>不走对方的坏接口</b>：由本站的 /api/hs-decks 在服务端去抓对方的卡组页，解析成干净数据后同源返回，所以不受跨域限制。索引来自对方的 /meta 页，最多一次 640 套；点「导入组卡器」会现抓该套详情页取卡组代码。</span>
+      </div>
+      <div class="finder-result" id="hsList">
+        <div class="empty-state">点「加载卡组库」开始取数</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <span class="card-title">环境快照</span>
         <span class="card-subtitle" id="finderMetaStatus">尚未获取</span>
       </div>
