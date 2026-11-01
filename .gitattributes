@@ -1,0 +1,35 @@
+# ============================================================
+# 属性规则
+# 作用：统一换行符、标记二进制文件、优化 GitHub 展示
+# ============================================================
+
+# ---- 默认：自动判定文本，统一使用 LF 换行 ----
+# 防止 Windows / macOS / Linux 协作时产生整文件的换行 diff
+* text=auto eol=lf
+
+# ---- 明确声明代码文件为文本 ----
+*.html  text
+*.css   text
+*.js    text
+*.json  text
+*.md    text
+
+# ---- 二进制文件：禁止换行转换与文本 diff ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary
+
+# ---- 卡库数据：体积大且由脚本生成，排除出 GitHub 语言统计 ----
+# 不加这行，10.4 MB 的 JSON 会把仓库语言占比刷成「JSON 99%」
+data/*.json  linguist-generated=true
+
+# ---- 折叠卡库数据的 diff（避免巨大的逐行对比）----
+data/hearthstone_cards_zhCN.json  -diff
