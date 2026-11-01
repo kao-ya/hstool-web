@@ -17,10 +17,13 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    # 固定 24.04，不用 ubuntu-latest：latest 会在 2026-10 之后迁到 Ubuntu 26，
+    # 到时候 python3 / git 版本突然变化，容易踩到不可预期的坑
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      # v4 跑在 Node 20 上，已被弃用（日志里的 deprecation 警告就是它）；v5 起改用 Node 24
+      - uses: actions/checkout@v6
 
       - name: 下载官方卡库
         run: |
