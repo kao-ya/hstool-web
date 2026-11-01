@@ -1,0 +1,22 @@
+# Cloudflare Pages 响应头（放在仓库根目录，构建输出根目录 = 仓库根）
+# 说明：每个规则段 = 一行路径模式 + 若干缩进的 Header；多个规则命中时同名 Header 后者覆盖前者，
+#       因此这里只用互不重叠的前缀，避免互相打架。
+
+# 卡库与分组元数据：每小时可直接复用，过期后浏览器后台静默验证（用户无感）
+# 卡库由 GitHub Actions 每 10 小时同步一次 → 1 小时的容差足够让更新自然生效
+/data/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+# 图片与字体：内容不变，长缓存 + immutable（省掉 1.2MB 背景图与 PNG 的每次回源）
+/img/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 代码类文件没做文件名哈希，必须保持“每次验证”，否则改完推上去用户看不到新版
+/js/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+/css/*
+  Cache-Control: public, max-age=0, must-revalidate

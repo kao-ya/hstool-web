@@ -561,14 +561,15 @@ function normalizeCard(c) {
 
 async function loadCardDatabase() {
   const t0 = performance.now();
-  // 用 no-cache（不是 no-store）：每次加载都向服务器确认一次，
-  // 文件没变时服务器回 304，几乎不花流量；文件变了才重新下载。
-  // 原来写的是 force-cache —— 那会让浏览器一直用本地旧副本，卡库更新后
-  // 用户界面上的卡牌总数永远停在旧数字（必须手动清缓存才会变），
-  // 所以这里绝不能图省事写 force-cache。
+  // 缓存策略交给 HTTP 响应头（仓库根目录的 _headers 文件）决定，这里不写 cache 参数：
+  //   /data/*.json 在 _headers 里是 max-age=3600 + stale-while-revalidate=86400
+  //   → 1 小时内直接用浏览器/边缘缓存（0 请求），过期后后台静默验证，卡库更新也能自然生效。
+  // 两个坑都踩过，别再走回头路：
+  //   force-cache：浏览器永远用本地旧副本，卡库更新后卡牌总数卡着不变（要手动清缓存）；
+  //   no-cache：每次打开都强制回源，11 MB 卡库要等一个网络往返才开始解析，首屏明显变慢。
   const [cardsResp, metaResp] = await Promise.all([
-    fetch(CARDS_URL, { cache: "no-cache" }),
-    fetch(CARDS_META_URL, { cache: "no-cache" }),
+    fetch(CARDS_URL),
+    fetch(CARDS_META_URL),
   ]);
   if (!cardsResp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + cardsResp.status + "）");
   if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
