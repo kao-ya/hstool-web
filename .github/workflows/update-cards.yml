@@ -1,0 +1,87 @@
+name: 同步卡库
+
+# 定时说明：GitHub 的 cron 一律用 UTC，北京时间 = UTC + 8
+#   0 2,12,22 * * *  ->  UTC 02:00 / 12:00 / 22:00  ->  北京 10:00 / 20:00 / 次日 06:00
+# 若想改成 UTC 每 10 小时整点（北京 08/18/04），把上面这行换成：0 */10 * * *
+on:
+  schedule:
+    - cron: "0 2,12,22 * * *"
+  workflow_dispatch: # 允许在 Actions 页面手动点一下运行
+
+permissions:
+  contents: write # 没有这行 git push 会被 403 挡住
+
+concurrency:
+  group: update-cards
+  cancel-in-progress: false # 上一轮没跑完就排队，不并发
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载官方卡库
+        run: |
+          curl -fsSL --retry 3 --retry-delay 5 \
+            -o /tmp/cards.json \
+            "https://api.hearthstonejson.com/v1/latest/zhCN/cards.json"
+          ls -lh /tmp/cards.json
+
+      - name: 比对并写回
+        id: diff
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+
+          new = json.loads(pathlib.Path("/tmp/cards.json").read_text(encoding="utf-8"))
+          dst = pathlib.Path("data/hearthstone_cards_zhCN.json")
+          old = json.loads(dst.read_text(encoding="utf-8"))
+
+          # 只用真正影响展示的字段做指纹，避免无关字段抖动造成“假变化”
+          def fp(cards):
+              key = sorted(
+                  (c.get("dbfId", 0), c.get("id", ""), c.get("name", ""),
+                   c.get("cost"), c.get("text", ""), c.get("set", ""))
+                  for c in cards
+              )
+              return hashlib.sha256(repr(key).encode()).hexdigest()
+
+          changed = "0"
+          if fp(old) != fp(new):
+              # 保持原文件的单行风格（json.dumps 默认分隔符与本地一致）
+              dst.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+
+              meta_p = pathlib.Path("data/cards-meta.json")
+              meta = json.loads(meta_p.read_text(encoding="utf-8"))
+              meta["counts"]["total"] = len(new)
+              # cards-meta.json 原来是单行紧凑格式，必须用 separators 才不会被格式化成多行
+              meta_p.write_text(
+                  json.dumps(meta, ensure_ascii=False, separators=(",", ":")),
+                  encoding="utf-8",
+              )
+
+              # 出现没登记过的新系列时只报警告：中文名没法自动生成，需要人工补 cards-meta.json
+              known = {code for group in meta["sets"] for code, _ in group["items"]}
+              unknown = sorted({c.get("set", "") for c in new} - known - {""})
+              if unknown:
+                  print(f"::warning::发现未登记系列：{', '.join(unknown)}，请补 data/cards-meta.json")
+
+              print(f"有变化：{len(old)} -> {len(new)} 张")
+              changed = "1"
+          else:
+              print(f"无实质变化，仍是 {len(new)} 张")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"changed={changed}\n")
+          PY
+
+      - name: 提交并推送
+        if: steps.diff.outputs.changed == '1'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "data: 同步卡库 $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
