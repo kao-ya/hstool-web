@@ -1306,9 +1306,9 @@
     width: 100%; height: 100%;
     object-fit: cover;
     opacity: 1;
-    object-position: center 26%;
-    transform: scale(3.2) translateX(-2%);
-    transform-origin: center 32%;
+    /* 现在是方形插画，不再是「卡牌渲染图」，所以去掉原来放大 3.2 倍抠卡面画的做法，
+       直接 cover 裁切；object-position 略微偏上，优先露出头部 */
+    object-position: center 20%;
   }
   .deck-hero-card::after {
     content: "";
@@ -2398,22 +2398,25 @@
   }
   .hero-item .hero-img-wrap {
     width: 100%;
-    aspect-ratio: 3 / 4;
+    /* 改用 art.hearthstonejson.com/v1/512x/*.jpg 的方形原画（无卡框），
+       所以容器从 3/4 卡牌比例改成 1/1，插画不再被裁掉两侧 */
+    aspect-ratio: 1 / 1;
     overflow: hidden;
     position: relative;
     background: #241a10;
   }
   .hero-item .hero-img-wrap img {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 118%;
-    height: 118%;
-    transform: translate(-50%, -50%);
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    object-position: center 20%;
+    object-position: center 26%;
     display: block;
+    transition: transform 0.25s var(--ease-standard);
   }
+  .hero-item:hover .hero-img-wrap img { transform: scale(1.05); }
   .hero-item .hero-name {
     padding: 6px 8px;
     font-size: 12px;

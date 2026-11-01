@@ -3016,9 +3016,11 @@ function updateDeckBadge() {
 function renderDeckHeroCard() {
   const card = document.getElementById("deckHeroCard");
   if (deckState.hero && deckState.hero.cardId) {
-    const heroArtUrl = "https://art.hearthstonejson.com/v1/render/latest/zhCN/512x/" + deckState.hero.cardId + ".png";
+    const artUrl = heroIllustrationUrl(deckState.hero.cardId);
+    const fallbackUrl = heroRenderUrl(deckState.hero.cardId, "zhCN");
     card.innerHTML =
-      '<img src="' + heroArtUrl + '" alt="' + escapeHtml(deckState.hero.name) + '" onerror="this.style.display=\'none\'">' +
+      '<img src="' + artUrl + '" data-fallback="' + fallbackUrl + '" alt="' + escapeHtml(deckState.hero.name) + '" ' +
+      'onerror="if(!this.dataset.triedFallback){this.dataset.triedFallback=1;this.src=this.dataset.fallback;}else{this.style.display=\'none\';}">' +
       '<div class="deck-name-label">' +
         '<span class="name">' + escapeHtml(deckState.deckName) + '</span>' +
         '<span class="hint">点击更换</span>' +
@@ -3445,6 +3447,17 @@ function closeHeroSelector() {
   unlockBodyScroll();
 }
 
+// 英雄图走 art.hearthstonejson.com：
+//   v1/512x/{cardId}.jpg         → 512×512 方形原画（插画，无卡框）← 英雄选择器/卡组头图用这个
+//   v1/render/latest/zhCN/…png   → 带卡框的整张卡牌渲染（取不到插画时兜底）
+const HERO_ART_BASE = "https://art.hearthstonejson.com/v1/";
+function heroIllustrationUrl(cardId) {
+  return cardId ? HERO_ART_BASE + "512x/" + cardId + ".jpg" : "";
+}
+function heroRenderUrl(cardId, loc) {
+  return cardId ? HERO_ART_BASE + "render/latest/" + (loc || "zhCN") + "/512x/" + cardId + ".png" : "";
+}
+
 function renderHeroGrid() {
   const grid = document.getElementById("heroGrid");
   grid.innerHTML = "";
@@ -3452,14 +3465,15 @@ function renderHeroGrid() {
   HERO_LIST.forEach(h => {
     const div = document.createElement("div");
     div.className = "hero-item";
-    const imgUrl = "https://art.hearthstonejson.com/v1/render/latest/zhCN/512x/" + h.cardId + ".png";
-    const enUrl = "https://art.hearthstonejson.com/v1/render/latest/enUS/512x/" + h.cardId + ".png";
+    const imgUrl = heroIllustrationUrl(h.cardId);
+    const fallbackUrl = heroRenderUrl(h.cardId, "zhCN");
+    const enUrl = heroRenderUrl(h.cardId, "enUS");
     const clsName = (CLASS_LIST.find(x => x[0] === h.cardClass) || [])[1] || h.cardClass;
 
     div.innerHTML =
       '<div class="hero-img-wrap">' +
-        '<img loading="lazy" src="' + imgUrl + '" data-en="' + enUrl + '" alt="' + escapeHtml(h.name) + '" ' +
-        'onerror="if(!this.dataset.triedEn){this.dataset.triedEn=1;this.src=this.dataset.en;}else{this.style.display=\'none\';}">' +
+        '<img loading="lazy" src="' + imgUrl + '" data-fallback="' + fallbackUrl + '" data-en="' + enUrl + '" alt="' + escapeHtml(h.name) + '" ' +
+        'onerror="if(!this.dataset.triedFallback){this.dataset.triedFallback=1;this.src=this.dataset.fallback;}else if(!this.dataset.triedEn){this.dataset.triedEn=1;this.src=this.dataset.en;}else{this.style.display=\'none\';}">' +
       '</div>' +
       '<div class="hero-class">' + escapeHtml(clsName) + '</div>' +
       '<div class="hero-name">' + escapeHtml(h.name) + '</div>';
