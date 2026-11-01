@@ -95,15 +95,29 @@
           </div>
         </div>
 
+        <div class="deck-curve">
+          <div class="deck-curve-head">
+            <span class="deck-curve-title">法力曲线</span>
+            <span class="deck-curve-hint" id="deckCurveHint"></span>
+          </div>
+          <div class="deck-curve-bars" id="deckCurveBars"></div>
+        </div>
+
         <div class="deck-dust-bar">
           <span class="label"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M9.5 3L12 9l2.5-6M12 9v12"/></svg> 合成所需奥术之尘</span>
           <span class="value" id="deckDustCost">0</span>
         </div>
 
+        <div class="deck-dust-bar deck-dust-bar-gold">
+          <span class="label"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M9.5 3L12 9l2.5-6M12 9v12"/></svg> 全金卡合成所需</span>
+          <span class="value" id="deckDustGoldCost">0</span>
+        </div>
+
         <div class="deck-sidebar-footer">
           <div class="deck-config-mini">
             <input type="text" id="deckHeroInput" placeholder="英雄名称 / DBF ID" readonly>
-            <select id="deckFormatSelect">
+            <div class="filter-dd-host deck-format-dd" id="deckFormatDd"></div>
+            <select id="deckFormatSelect" style="display:none;">
               <option value="1">狂野</option>
               <option value="2">标准</option>
             </select>

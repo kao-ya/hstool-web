@@ -721,6 +721,14 @@ const DUST_COST = {
   "LEGENDARY": 1600,
   "FREE": 0,
 };
+// 金色卡牌合成费用（官方价目：金卡 = 普通卡的 10/8/4/2 倍，不是统一倍数）
+const DUST_COST_GOLD = {
+  "COMMON": 400,
+  "RARE": 800,
+  "EPIC": 1600,
+  "LEGENDARY": 3200,
+  "FREE": 0,
+};
 // 系列级的「可收藏」覆盖规则已收敛到 isCollectibleRaw（见文件前半段的
 // COLLECTIBLE_TYPES 注释）：① 类型门 → ② VANILLA 排除 / CORE 放行 → ③ 数据源字段。
 // 原先这里还有 NON_COLLECTIBLE_SETS / COLLECTIBLE_SETS 两张表，与 isCollectibleRaw
@@ -1706,6 +1714,7 @@ async function importToDeckBuilder(heroesText, cardsText, format, sideboardPairs
   if (format) {
     deckState.format = parseInt(format);
     document.getElementById("deckFormatSelect").value = String(deckState.format);
+  hsSyncDeckFormat();   // 自绘下拉跟着回填（原生 select 已隐藏）
   }
 
   if (cardsText) {
@@ -1836,6 +1845,8 @@ function initPreview() {
   initFilterTags();
   initDeckDropZone();
   bindDeckHoverPreview();
+  bindGridHoverZoom();
+  hsBuildDeckFormatDropdown();
 
   doCardSearch(1);
 }
@@ -2511,6 +2522,8 @@ function createCardElement(card, index) {
   const div = document.createElement("div");
   div.className = "card-item";
   div.dataset.dbfId = card.dbfId;
+  // 悬停放大用：浮层预览是拿 cardId（"CS2_029" 这种）去取图的，dbfId 取不到图
+  div.dataset.hoverCardId = card.id;
 
   const img = document.createElement("img");
   img.decoding = "async";
@@ -2997,15 +3010,18 @@ function clearDeck() {
 
 function updateDeckBadge() {
   let dust = 0;
-  deckState.cards.forEach(e => {
-    dust += (DUST_COST[e.card.rarity] || 0) * e.count;
-  });
+  let goldDust = 0;
+  const addDust = (c, n) => {
+    dust += (DUST_COST[c.rarity] || 0) * n;
+    goldDust += (DUST_COST_GOLD[c.rarity] || 0) * n;
+  };
+  deckState.cards.forEach(e => addDust(e.card, e.count));
   // 乐队（sideboard）卡牌同样计入粉尘：每张按 1 份算，与渲染时的 count: 1 保持一致
   deckState.bands.forEach(band => {
     band.forEach(bandCard => {
       // 兼容两种存法：直接存卡对象，或存 {card, count} 包装
       const c = bandCard.card || bandCard;
-      dust += (DUST_COST[c.rarity] || 0) * (bandCard.count || 1);
+      addDust(c, bandCard.count || 1);
     });
   });
   const statsEl = document.getElementById("deckStatsNum");
@@ -3014,6 +3030,48 @@ function updateDeckBadge() {
   if (limitEl) limitEl.textContent = getDeckLimit();
   const dustEl = document.getElementById("deckDustCost");
   if (dustEl) dustEl.textContent = dust.toLocaleString();
+  const goldEl = document.getElementById("deckDustGoldCost");
+  if (goldEl) goldEl.textContent = goldDust.toLocaleString();
+  renderManaCurve();
+}
+
+// ============================================================
+// 法力曲线（0 / 1 / … / 6 / 7+ 共 8 格）
+// ============================================================
+const CURVE_BUCKETS = 8;   // 最后一格是 7+（7 费及以上全部并进去）
+
+function renderManaCurve() {
+  const box = document.getElementById("deckCurveBars");
+  if (!box) return;
+
+  const counts = new Array(CURVE_BUCKETS).fill(0);
+  deckState.cards.forEach(e => {
+    const raw = e.card.cost;
+    // 没有费用的卡（少数 token / 英雄牌）按 0 费算，避免出现 NaN 格子
+    const cost = (typeof raw === "number" && isFinite(raw) && raw > 0) ? raw : 0;
+    const idx = Math.min(CURVE_BUCKETS - 1, Math.floor(cost));
+    counts[idx] += e.count;
+  });
+
+  const max = counts.reduce((a, b) => Math.max(a, b), 0) || 1;
+  let html = "";
+  for (let i = 0; i < CURVE_BUCKETS; i++) {
+    const n = counts[i];
+    // 有卡的最低也给 8% 高度，否则 1 张的柱子矮到看不见
+    const h = n ? Math.max(8, Math.round((n / max) * 100)) : 0;
+    const label = (i === CURVE_BUCKETS - 1) ? "7+" : String(i);
+    html +=
+      '<div class="curve-col' + (n ? " has-cards" : "") + '" data-bucket="' + i + '" title="' + label + " 费：" + n + ' 张">' +
+        '<div class="curve-count">' + (n || "") + "</div>" +
+        '<div class="curve-track"><div class="curve-bar" style="height:' + h + '%"></div></div>' +
+        '<div class="curve-label">' + label + "</div>" +
+      "</div>";
+  }
+  box.innerHTML = html;
+
+  const total = counts.reduce((a, b) => a + b, 0);
+  const hintEl = document.getElementById("deckCurveHint");
+  if (hintEl) hintEl.textContent = total ? total + " 张" : "";
 }
 
 function renderDeckHeroCard() {
@@ -3244,26 +3302,42 @@ function renderDeckCards() {
 const globalHoverPreview = document.getElementById("globalHoverPreview");
 const globalHoverImg = document.getElementById("globalHoverImg");
 
-function showCardHoverPreview(cardId, rowEl) {
-  if (!cardId || !rowEl) return;
-  // 设置里可以整体关掉悬停预览
-  if (!settings.hoverPreview) return;
+function showCardHoverPreview(cardId, anchorEl, mode) {
+  if (!cardId || !anchorEl) return;
+  // 两种用途共用一个浮层：
+  //   mode 缺省 / "side" —— 组卡器列表：浮层贴在行旁边，由「悬停预览」开关控制；
+  //   mode "center"      —— 卡牌库网格：浮层直接盖在被悬停的卡上（视觉上就是这张卡变大了），
+  //                         由「悬停放大卡牌」开关控制。
+  const gate = mode === "center" ? settings.cardHoverZoom : settings.hoverPreview;
+  if (!gate) return;
 
-  const rect = rowEl.getBoundingClientRect();
+  const rect = anchorEl.getBoundingClientRect();
   const pw = 260;
   const gap = 14;
 
-  // 默认显示在行的左侧
-  let left = rect.left - pw - gap;
-  let top = rect.top + rect.height / 2;
+  // 浮层尺寸（与 CSS .global-hover-preview 一致：宽 260，高由 256/372 比例撑出约 378）
+  const ph = 378;
+  let left;
+  let top;
 
-  // 左侧空间不够 → 显示在右侧
-  if (left < 8) {
-    left = rect.right + gap;
+  if (mode === "center") {
+    // 网格一行 6~7 张，放在旁边会整片盖住邻居，所以居中盖住自己
+    left = rect.left + rect.width / 2 - pw / 2;
+    top = rect.top + rect.height / 2;
+  } else {
+    // 默认显示在行的左侧
+    left = rect.left - pw - gap;
+    top = rect.top + rect.height / 2;
+
+    // 左侧空间不够 → 显示在右侧
+    if (left < 8) {
+      left = rect.right + gap;
+    }
   }
 
-  // 上下边界修正
-  const ph = 360;
+  // 左右 / 上下边界修正（两种模式都要，居中模式下第一列、第一行会贴边）
+  if (left < 8) left = 8;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
   if (top - ph / 2 < 8) top = ph / 2 + 8;
   if (top + ph / 2 > window.innerHeight - 8) {
     top = window.innerHeight - ph / 2 - 8;
@@ -3333,6 +3407,30 @@ function bindDeckHoverPreview() {
 
   list.addEventListener("mouseleave", () => {
     list._hoverRow = null;
+    hideCardHoverPreview();
+  });
+}
+
+// 卡牌库网格的悬停放大：同样用容器级事件代理。
+// 放大后的卡是复用 globalHoverPreview 浮层（CSS 里 pointer-events:none），
+// 所以它盖住原卡也不会打断 hover，鼠标从浮层上划过仍然是同一张卡的 hover。
+function bindGridHoverZoom() {
+  const grid = document.getElementById("cardGrid");
+  if (!grid || grid.dataset.zoomBound === "1") return;
+  grid.dataset.zoomBound = "1";
+
+  grid.addEventListener("mouseover", (e) => {
+    if (!settings.cardHoverZoom) return;
+    const item = e.target.closest(".card-item[data-hover-card-id]");
+    if (!item || !grid.contains(item)) return;
+    // 同一张卡内移动（移到名字 / 角标上）不重复处理
+    if (item === grid._zoomItem) return;
+    grid._zoomItem = item;
+    showCardHoverPreview(item.dataset.hoverCardId, item, "center");
+  });
+
+  grid.addEventListener("mouseleave", () => {
+    grid._zoomItem = null;
     hideCardHoverPreview();
   });
 }
@@ -4241,6 +4339,37 @@ function hsEnhanceSelects() {
       });
     })(sels[i]);
   }
+}
+
+/* 卡组侧栏「狂野 / 标准」的原生 select 换成同一套自绘下拉。
+   select 本身隐藏但保留在 DOM 里当取值容器：现有代码读的都是
+   document.getElementById("deckFormatSelect").value，因此一行都不用改。 */
+function hsBuildDeckFormatDropdown() {
+  var host = document.getElementById("deckFormatDd");
+  var sel = document.getElementById("deckFormatSelect");
+  if (!host || !sel || host.dataset.init) return;
+  host.dataset.init = "1";
+  var options = [];
+  for (var i = 0; i < sel.options.length; i++) {
+    options.push([sel.options[i].value, (sel.options[i].textContent || "").trim()]);
+  }
+  var dd = hsCreateDropdown({
+    mount: host,
+    label: "",
+    options: options,
+    value: sel.value,
+    onPick: function (v) {
+      sel.value = v;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+  sel._hsDd = dd;
+}
+
+/* 代码里直接给 deckFormatSelect.value 赋值时（如导入卡组回填模式），把自绘下拉同步过去 */
+function hsSyncDeckFormat() {
+  var sel = document.getElementById("deckFormatSelect");
+  if (sel && sel._hsDd) sel._hsDd.hsSync(sel.value);
 }
 
 function initHsLibrary() {

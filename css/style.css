@@ -415,6 +415,8 @@
   body.no-border .deck-hero-card,
   body.no-border .deck-list-header,
   body.no-border .deck-dust-bar,
+  body.no-border .deck-dust-bar-gold,
+  body.no-border .deck-curve,
   body.no-border .deck-sidebar-footer,
   body.no-border .hero-selector-header { border-color: transparent; }
   body.no-border .settings-divider { background: transparent; }
@@ -1148,20 +1150,19 @@
     z-index: 2;
   }
   /* 悬停放大卡牌（设置 → 功能 → 悬停放大卡牌）。
-     只作用于卡牌库网格；组卡器列表那侧走的是「悬停预览」浮层，互不干扰。
-     注意 .card-grid 是 overflow-y:auto —— 按 CSS 规范另一轴会从 visible 计算成 auto，
-     而溢出裁剪发生在 padding box 边界，所以放大模式下必须给网格留出足够内边距：
-     卡宽约 169px、放大 1.1 倍即四周各外扩约 8.5px（垂直 275px 高时约 14px），
-     给到 16px 后最边一行的放大卡才不会被切角（实测 13px 时首行仍差 1px）。 */
-  body.card-hover-zoom .card-grid { padding: 16px; }
+     「放大」交给 JS 里复用的全局浮层 #globalHoverPreview（260px 宽，与组卡器列表的
+     悬停预览完全同尺寸），浮层直接盖在被悬停的卡上。
+     为什么不用 transform: scale：.card-grid 是 overflow-y:auto，按规范另一轴会算成
+     auto，裁剪发生在 padding box 边界，放大后的卡一定被切角（实测 1.1 倍就要 16px
+     内边距）；想放大到 260px 宽（约 1.5 倍）需要 43px 横向内边距，不现实。
+     所以这里只保留轻量抬升反馈。 */
   body.card-hover-zoom .card-item {
     transition: box-shadow var(--motion-short), border-color var(--motion-short),
                 background var(--motion-short), transform var(--motion-short);
   }
   body.card-hover-zoom .card-item:hover {
-    transform: scale(1.1);
-    /* 必须抬到相邻卡之上，否则放大部分会被后一张卡盖住 */
-    z-index: 30;
+    transform: translateY(-2px);
+    z-index: 5;
   }
   .card-item img {
     width: 100%;
@@ -1736,6 +1737,98 @@
     font-size: 14px;
   }
 
+  /* 全金卡合成价：与普通粉尘同一块底板，只是数字换成金色并细分隔开 */
+  .deck-dust-bar-gold {
+    border-top: 1px dashed var(--border);
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .deck-dust-bar-gold .value { color: #e8b84b; font-size: 13px; }
+  .deck-dust-bar-gold .label { font-weight: 500; font-size: 11.5px; }
+
+  /* ============================================================
+     法力曲线（侧栏，0-1-2 … 7+，共 8 档）
+     ============================================================ */
+  .deck-curve {
+    padding: 8px 12px 6px;
+    border-top: 1px solid var(--border);
+    background: var(--inner);
+    flex-shrink: 0;
+  }
+  .deck-curve-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+  .deck-curve-hint {
+    font-family: "Consolas", monospace;
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  .deck-curve-bars {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 3px;
+    align-items: end;
+  }
+  .curve-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+  }
+  .curve-count {
+    height: 9px;
+    font-family: "Consolas", monospace;
+    font-size: 9px;
+    line-height: 9px;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity var(--motion-short);
+  }
+  .curve-col.has-cards .curve-count { opacity: 1; }
+  .curve-track {
+    width: 100%;
+    height: 44px;
+    display: flex;
+    align-items: flex-end;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    overflow: hidden;
+  }
+  .curve-bar {
+    width: 100%;
+    height: 0;
+    border-radius: 3px 3px 0 0;
+    background: var(--primary);
+    transition: height var(--motion-short) var(--ease-emphasized);
+  }
+  /* 高费/低费用色阶区分，一眼看出曲线重心 */
+  .curve-col[data-bucket="0"] .curve-bar { background: #7cb342; }
+  .curve-col[data-bucket="1"] .curve-bar { background: #9ccc65; }
+  .curve-col[data-bucket="2"] .curve-bar { background: #4fc3f7; }
+  .curve-col[data-bucket="3"] .curve-bar { background: #29b6f6; }
+  .curve-col[data-bucket="4"] .curve-bar { background: #5c6bc0; }
+  .curve-col[data-bucket="5"] .curve-bar { background: #7e57c2; }
+  .curve-col[data-bucket="6"] .curve-bar { background: #ab47bc; }
+  .curve-col[data-bucket="7"] .curve-bar { background: #ec407a; }
+  .curve-label {
+    font-family: "Consolas", monospace;
+    font-size: 9px;
+    line-height: 9px;
+    color: var(--muted);
+  }
+  /* 有牌的档位标签提亮，空格位保持灰 */
+  .curve-col.has-cards .curve-label { color: var(--text); font-weight: 700; }
+
   .deck-sidebar-footer {
     padding: 8px 12px 10px;
     border-top: 1px solid var(--border);
@@ -1761,6 +1854,44 @@
   .deck-config-mini input:focus,
   .deck-config-mini select:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(197, 148, 61, 0.18); }
   .deck-config-mini input:read-only { opacity: 0.75; cursor: not-allowed; }
+
+  /* 侧栏「狂野 / 标准」自绘下拉：尺寸对齐左边的只读输入框，
+     菜单向上展开——.deck-sidebar 有 overflow:hidden + transform:scale()，
+     固定定位的后代会被缩放后的祖先当包含块，往下弹一定被裁。 */
+  .deck-format-dd { display: block; min-width: 0; }
+  .deck-format-dd .filter-dd { display: block; width: 100%; }
+  .deck-format-dd .filter-dd-btn {
+    width: 100%;
+    height: 25px;
+    padding: 0 9px;
+    justify-content: space-between;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: var(--shape-full);
+    background: var(--inner);
+  }
+  .deck-format-dd .filter-dd-btn .dd-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .deck-format-dd .filter-dd-btn .dd-caret { font-size: 8px; }
+  .deck-format-dd .filter-dd-menu {
+    top: auto;
+    bottom: calc(100% + 5px);
+    left: auto;
+    right: 0;
+    min-width: 100%;
+    width: max-content;
+    max-width: 150px;
+    max-height: 40vh;
+  }
+  .deck-format-dd .menu-item {
+    padding: 5px 8px;
+    font-size: 11.5px;
+    border-radius: var(--shape-md);
+  }
 
   .deck-sidebar-footer .btn-row {
     display: flex;
