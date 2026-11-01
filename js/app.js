@@ -566,9 +566,14 @@ function normalizeCard(c) {
 
 async function loadCardDatabase() {
   const t0 = performance.now();
+  // 用 no-cache（不是 no-store）：每次加载都向服务器确认一次，
+  // 文件没变时服务器回 304，几乎不花流量；文件变了才重新下载。
+  // 原来写的是 force-cache —— 那会让浏览器一直用本地旧副本，卡库更新后
+  // 用户界面上的卡牌总数永远停在旧数字（必须手动清缓存才会变），
+  // 所以这里绝不能图省事写 force-cache。
   const [cardsResp, metaResp] = await Promise.all([
-    fetch(CARDS_URL, { cache: "force-cache" }),
-    fetch(CARDS_META_URL, { cache: "force-cache" }),
+    fetch(CARDS_URL, { cache: "no-cache" }),
+    fetch(CARDS_META_URL, { cache: "no-cache" }),
   ]);
   if (!cardsResp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + cardsResp.status + "）");
   if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
