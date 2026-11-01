@@ -1729,6 +1729,14 @@
     display: flex; align-items: center; gap: 4px;
     font-weight: 600;
   }
+  /* 粉尘图标（aszc.png 原图 31×39）：按高度缩放，宽度自适应，保持钻石比例 */
+  .deck-dust-bar .dust-icon {
+    height: 16px;
+    width: auto;
+    display: block;
+    flex-shrink: 0;
+    image-rendering: -webkit-optimize-contrast;
+  }
   .deck-dust-bar .value {
     font-family: "Consolas", monospace;
     font-weight: 700;
