@@ -2803,3 +2803,18 @@ body.dark-mode .rune-unholy { border-color: rgba(106, 176, 76, 0.6); color: #b6d
 body.dark-mode .deck-rune-total.over { color: #ff8b80; }
 
 body.no-border .kw-tip { border-color: transparent; }
+
+  /* 排序方向按钮（与排序下拉同一行；图标朝上=升序，朝下=降序） */
+  .sort-dir-btn {
+    justify-content: center;
+    /* 与排序下拉严格同高：.filter-dropdowns 是 align-items:center 的 flex，
+       用 stretch 让按钮撑满行高（= 最高的那个下拉按钮），不用写死像素 */
+    align-self: stretch;
+    padding: 0 9px;
+    gap: 0;
+  }
+  .sort-dir-btn[hidden] { display: none; }
+  .sort-dir-btn .sort-dir-icon { display: inline-flex; align-items: center; }
+  .sort-dir-btn .sort-dir-icon svg { transition: transform var(--motion-short); }
+  .sort-dir-btn[data-dir="desc"] .sort-dir-icon svg { transform: rotate(180deg); }
+  .sort-dir-btn:hover { color: var(--primary); }

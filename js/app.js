@@ -4845,17 +4845,33 @@ window.addEventListener("resize", hideKwTip);
 
 // ---------- 5. 卡牌库排序方式 ----------
 
+// 排序维度：方向由旁边的图标按钮控制，不再拆成「低到高 / 高到低」两个选项
 const SORT_OPTIONS = [
   ["default", "默认（可收藏优先）"],
-  ["cost-asc", "法力：低到高"],
-  ["cost-desc", "法力：高到低"],
-  ["attack-asc", "攻击：低到高"],
-  ["attack-desc", "攻击：高到低"],
-  ["health-asc", "生命：低到高"],
-  ["health-desc", "生命：高到低"],
-  ["name", "名称"],
-  ["new", "最新"],
+  ["cost", "按法力值"],
+  ["attack", "按攻击力"],
+  ["health", "按生命值"],
+  ["name", "按名称"],
+  ["new", "按最新"],
 ];
+
+// 有意义的排序方向；默认排序与「最新」本身就是固定的，不给方向按钮
+const SORT_DIR_CAPABLE = { cost: 1, attack: 1, health: 1, name: 1 };
+
+// 「维度 + 方向」拼成内部与后端共用的排序键（沿用历史键名，后端契约保持不变）
+function sortKeyOf(field, dir) {
+  if (field === "new") return "new";
+  if (!SORT_DIR_CAPABLE[field]) return "default";
+  return field + (dir === "desc" ? "-desc" : "-asc");
+}
+
+// 从排序键反推维度（兼容历史键名 cost-asc / name / new）
+function sortFieldOf(key) {
+  const k = String(key || "default");
+  if (k === "new") return "new";
+  const m = /^(cost|attack|health|name)(?:-(?:asc|desc))?$/.exec(k);
+  return m ? m[1] : "default";
+}
 
 function sortCardList(list, sort) {
   const num = (v, dflt) => (v === undefined || v === null ? dflt : v);
@@ -4869,6 +4885,7 @@ function sortCardList(list, sort) {
       case "health-asc": return num(a.health, 99) - num(b.health, 99) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
       case "health-desc": return num(b.health, -1) - num(a.health, -1) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
       case "name": return byName(a, b);
+      case "name-desc": return byName(b, a);
       case "new": return num(b.dbfId, 0) - num(a.dbfId, 0);
       default: {
         const ca = isCollectible(a) ? 0 : 1, cb = isCollectible(b) ? 0 : 1;
@@ -4885,17 +4902,57 @@ function buildSortDropdown() {
   if (!wrap || wrap.dataset.init) return;
   wrap.dataset.init = "1";
   searchState.sort = searchState.sort || "default";
+  searchState.sortField = searchState.sortField || sortFieldOf(searchState.sort);
+  if (!searchState.sortDir) searchState.sortDir = /-desc$/.test(searchState.sort) ? "desc" : "asc";
+
   hsCreateDropdown({
     mount: wrap,
     label: "排序方式",
     options: SORT_OPTIONS,
-    value: searchState.sort,
+    value: searchState.sortField,
     clearLabel: "恢复默认排序",
     onPick: function (v) {
-      searchState.sort = v || "default";
+      searchState.sortField = v || "default";
+      hsSyncSortDirection();
       doCardSearch(1);
     }
   });
+
+  // 方向按钮：紧跟在排序下拉后面，随维度自动显隐
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "filter-dd-btn sort-dir-btn";
+  btn.id = "btnSortDir";
+  btn.innerHTML =
+    '<span class="sort-dir-icon" aria-hidden="true">' +
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M8 13.2V2.8"/><path d="M3.5 7.3 8 2.8l4.5 4.5"/>' +
+    "</svg></span>";
+  btn.addEventListener("click", function () {
+    searchState.sortDir = searchState.sortDir === "desc" ? "asc" : "desc";
+    hsSyncSortDirection();
+    doCardSearch(1);
+  });
+  wrap.appendChild(btn);
+  hsSyncSortDirection();
+}
+
+// 同步方向按钮：显隐、图标朝向、提示语，并把 searchState.sort 归一成后端认识的键
+function hsSyncSortDirection() {
+  const btn = document.getElementById("btnSortDir");
+  const capable = !!SORT_DIR_CAPABLE[searchState.sortField];
+  const asc = searchState.sortDir !== "desc";
+  searchState.sort = sortKeyOf(searchState.sortField, searchState.sortDir);
+  if (!btn) return;
+  btn.hidden = !capable;
+  btn.dataset.dir = asc ? "asc" : "desc";
+  btn.title = capable
+    ? asc
+      ? "当前升序（从低到高），点击切为降序"
+      : "当前降序（从高到低），点击切为升序"
+    : "当前排序方式没有升/降方向";
+  btn.setAttribute("aria-label", btn.title);
 }
 
 // ---------- 4. 死亡骑士符文校验 ----------
