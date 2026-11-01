@@ -285,7 +285,7 @@
 
       <div class="hint" style="margin:10px 0 0;">
         <span class="hint-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4.5 12.3c.6.5 1 1.4 1 2.3h7c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></span>
-        <span>浏览器直连会受<b>跨域限制</b>（对方没开 CORS）。查询失败时先看下面给出的原因；如果确认是跨域被拦，可在「代理设置」里填一个 CORS 代理前缀，只存本机、随时可清空。</span>
+        <span>对方接口目前<b>对跨域请求一律 403</b>（按 Origin 校验 host，且响应里没有 CORS 头），<b>取数链路本身还会断流</b>。所以现在查不出东西是对方的事，不是本工具坏了；等对方修好这里会自动出数据。代理设置只能绕开跨域这一层，绕不开断流。</span>
       </div>
     </div>
 

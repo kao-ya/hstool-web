@@ -3573,8 +3573,15 @@ function finderGetJson(pathAndQuery) {
 function finderWhyFailed(r) {
   if (r.err) {
     return escapeHtml(r.err) +
-      "<br>常见原因：① 对方接口故障；② 对方没开 CORS，浏览器把跨域请求拦了；③ 你的网络访问该域名不稳。" +
-      "<br>如果确认是 ②，可在「代理设置」里填一个 CORS 代理前缀（只存本机）后再查。";
+      '<br><br><b>为什么必然是这句：</b>浏览器读不到对方的响应头，就只能报 Failed to fetch。' +
+      "对方现在有两道拦截（2026-11-01 实测）：" +
+      '<br>① <b>跨域被按 Origin 拦掉</b>——带 <code>Origin: ' + escapeHtml(location.origin) +
+      "</code> 请求，对方直接回 <code>403 {\"error\":\"origin host mismatch … ≠ hstopdecks.com\"}</code>，而且响应里没有 " +
+      "<code>Access-Control-Allow-Origin</code>，浏览器因此判定失败，连状态码都不给你看；" +
+      '<br>② <b>取数链路自己断流</b>——换成从服务器端直连（不带 Origin、用对方自己的 Origin 都试过），' +
+      "连接会在返回任何字节之前被关闭；连它自家页面都在 <b>64 KB</b> 处截断（应回 362 KB 只收到 64.6 KB）。" +
+      '<br><br>所以「代理设置」只能绕开 ①，绕不开 ②：<b>现在就算代理通了，也拿不到数据。</b>' +
+      "等对方把取数链修好、并在响应里加上 CORS 头，这里会自动出结果，无需改代码。";
   }
   if (!r.text || !r.text.length) {
     return "对方返回了 HTTP " + r.status + "，但<b>响应体是 0 字节</b>。" +
