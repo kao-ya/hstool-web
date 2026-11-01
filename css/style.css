@@ -2746,3 +2746,47 @@
   /* 外部卡组库：搜索框与下拉的间距微调 */
   #tab-finder .search-bar input { height: 38px; }
   #hsDropdowns { min-height: 30px; }
+
+/* ============================================================
+   第一梯队补齐：关键词解释 tip / 符文章 / 排序下拉容器
+   ============================================================ */
+.detail-text .kw {
+  cursor: help;
+  border-bottom: 1px dashed rgba(197, 148, 61, 0.55);
+}
+.detail-text .kw:hover { color: var(--primary-hi); }
+
+.kw-tip {
+  position: fixed; z-index: 100000;
+  max-width: 286px; padding: 8px 11px;
+  border-radius: 10px;
+  background: rgba(20, 16, 22, 0.97);
+  border: 1px solid rgba(197, 148, 61, 0.35);
+  color: var(--text);
+  font-size: 12.5px; line-height: 1.6;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  opacity: 0; transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.kw-tip.show { opacity: 1; transform: none; }
+.kw-tip-name { display: block; font-weight: 700; color: var(--primary-hi); margin-bottom: 2px; }
+
+.deck-runes {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px 0 0;
+}
+.rune-pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.rune-blood { border-color: rgba(200, 72, 64, 0.6); color: #f0a9a4; }
+.rune-frost { border-color: rgba(74, 144, 217, 0.6); color: #a8cdf2; }
+.rune-unholy { border-color: rgba(106, 176, 76, 0.6); color: #b6dfa4; }
+.rune-zero { opacity: 0.5; }
+.deck-rune-total { margin-left: auto; font-size: 11px; color: var(--muted); }
+.deck-rune-total.over { color: #ff8b80; font-weight: 700; }
+
+body.no-border .kw-tip { border-color: transparent; }

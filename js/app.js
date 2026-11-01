@@ -336,7 +336,7 @@ function asValueSet(value) {
   return new Set([String(value)]);
 }
 
-function searchCards(query, filters, offset, limit) {
+function searchCards(query, filters, offset, limit, sort) {
   query = (query || "").trim().toLowerCase();
   const queryIsDbf = /^\d+$/.test(query);
   filters = filters || {};
@@ -397,13 +397,7 @@ function searchCards(query, filters, offset, limit) {
     all.push(card);
   }
 
-  all.sort((a, b) => {
-    const ca = isCollectible(a) ? 0 : 1, cb = isCollectible(b) ? 0 : 1;
-    if (ca !== cb) return ca - cb;
-    const va = a.cost != null ? a.cost : 99, vb = b.cost != null ? b.cost : 99;
-    if (va !== vb) return va - vb;
-    return a.name.localeCompare(b.name, "zh-Hans-CN");
-  });
+  sortCardList(all, sort || "default");
 
   const total = all.length;
   return { cards: all.slice(offset, offset + limit), total, offset, shown: Math.min(limit, Math.max(0, total - offset)) };
@@ -485,7 +479,8 @@ async function api(path, data) {
     case "/api/cards/search":
       return searchCards(data.query || "", data.filters || {},
                          parseInt(data.offset || 0, 10),
-                         parseInt(data.limit || 200, 10));
+                         parseInt(data.limit || 200, 10),
+                         data.sort || "default");
     case "/api/cards/detail":
       if (data.dbfId === undefined || data.dbfId === null) throw new Error("缺少 dbfId 参数");
       return cardDetail(parseInt(data.dbfId, 10));
@@ -1909,6 +1904,7 @@ const searchState = {
   total: 0,
   totalPages: 0,
   requestId: 0,
+  sort: "default",
 };
 
 function initPreview() {
@@ -1921,6 +1917,7 @@ function initPreview() {
   });
 
   initFilterTags();
+  buildSortDropdown();
   initDeckDropZone();
   bindDeckHoverPreview();
   bindGridHoverZoom();
@@ -2341,6 +2338,7 @@ async function doCardSearch(page) {
     const r = await api("/api/cards/search", {
       query: searchState.query,
       filters: searchState.filters,
+      sort: searchState.sort,
       offset: offset,
       limit: PAGE_SIZE,
     });
@@ -2524,6 +2522,16 @@ function cardImgUrl(cardOrId, size) {
 }
 function enCardImgUrl(cardId, size) {
   return IMG_HOST + "enUS/" + (size || "256x") + "/" + cardId + ".png";
+}
+
+// 长图专用卡图地址：走同源 Pages Function 代理。
+// 原因：art.hearthstonejson.com 不返回 Access-Control-Allow-Origin，
+// img.crossOrigin="anonymous" 会直接报错取不到图，不加又会让 canvas 被污染、
+// toBlob() 抛 SecurityError，长图就导不出来。由 /api/card-img 代取即可两边都满足。
+function posterImgUrl(card) {
+  const id = (card && typeof card === "object") ? card.id : String(card || "");
+  if (!id || isNoArtType(card)) return NO_CARD_IMG;
+  return "/api/card-img?u=" + encodeURIComponent("render/latest/zhCN/256x/" + id + ".png");
 }
 
 // 统一的卡图 onerror 回退：zhCN → enUS → 本地占位图。
@@ -2770,7 +2778,7 @@ async function showCardDetail(dbfId) {
     if (c.durability != null) infoHtml += '<div class="detail-stat"><span class="label">耐久</span><span class="value">' + c.durability + '</span></div>';
     infoHtml += '</div>';
 
-    if (c.text) infoHtml += '<div class="detail-text">' + c.text + '</div>';
+    if (c.text) infoHtml += '<div class="detail-text">' + renderCardTextHtml(c.text) + '</div>';
     if (c.flavor) infoHtml += '<div class="detail-flavor">「' + escapeHtml(c.flavor) + '」</div>';
 
     infoHtml += '<div class="detail-meta">';
@@ -3005,6 +3013,13 @@ async function addCardToDeck(card) {
     return;
   }
 
+  // 死亡骑士符文校验（对标官方组卡器：血/冰/邪合计上限 3 点）
+  const runeConflict = runeConflictMessage(card);
+  if (runeConflict) {
+    toast(runeConflict);
+    return;
+  }
+
   // ========== 奇闻卡：先算出实际会新增的附属 token ==========
   // （排除名单里的 token 不占卡位；先取好信息，上限校验与实际加入一致）
   const attachedToAdd = [];
@@ -3168,6 +3183,7 @@ function updateDeckBadge() {
   if (dustEl) dustEl.textContent = dust.toLocaleString();
   const goldEl = document.getElementById("deckDustGoldCost");
   if (goldEl) goldEl.textContent = goldDust.toLocaleString();
+  renderDeckRunes();
   renderManaCurve();
 }
 
@@ -4534,3 +4550,656 @@ function initHsLibrary() {
   }
 }
 
+
+// ============================================================
+// 第一梯队补齐（对标暴雪官方组卡器）：
+//   1) 关键词解释 tooltip      3) 卡组长图（canvas）
+//   4) 死亡骑士符文校验        5) 卡牌库排序方式
+// 说明：本段整体追加在 app.js 末尾，只读依赖前面已声明的函数与常量；
+//       KEYWORD_DEFS / KEYWORD_SLUGS 数据取自暴雪官方组卡器关键词表的 refText。
+// ============================================================
+
+// 关键词中文释义（取自暴雪官方组卡器关键词表的 refText，约 67 条）
+const KEYWORD_DEFS = {
+  "嘲讽": "敌人必须攻击具有嘲讽的随从。",
+  "法术伤害": "你的法术能造成额外的伤害。",
+  "圣盾": "被圣盾保护的随从免疫其受到的第一次伤害。",
+  "冲锋": "可以立即发起攻击。",
+  "奥秘": "在对手的回合发生某些特殊情况时展示并产生效果。",
+  "潜行": "无法被攻击或被指定为目标，直到其开始攻击为止。",
+  "战吼": "当你从你的手牌中使用它的时候，它会产生一些效果。",
+  "冻结": "被冻结的角色失去他们的下一次攻击机会。",
+  "风怒": "每个回合能够攻击两次。",
+  "亡语": "在其死亡时会产生一些效果。",
+  "连击": "如果在本回合中你已经使用过其他牌，它会产生额外的效果。",
+  "过载：X": "具有过载效果的卡牌会在下一个回合限制你的法力值。",
+  "沉默": "移除所有卡牌描述和附加效果。",
+  "反制": "被反制的牌不会产生任何效果。",
+  "免疫": "免疫的角色无法成为敌方的目标，不会受到伤害。",
+  "备用零件": "备用零件是一些法力值消耗为（1）点的法术，使用它们能够产生一些效果。",
+  "激励": "在你使用英雄技能后才会触发效果。",
+  "发现": "在三张卡牌中选择其一置入你的手牌。",
+  "任务": "会出现在起始手牌中。完成任务，获取奖励。",
+  "剧毒": "消灭任何受到其伤害的随从。",
+  "进化": "在三个增益中选择其一。",
+  "吸血": "造成伤害的同时，为你的英雄恢复等量的生命值。",
+  "招募": "从你的牌库中召唤一个随从。",
+  "回响": "使用此牌的回合内可反复使用。复制牌的法力值消耗不能低于（1）点。",
+  "突袭": "可以立即攻击随从。",
+  "超杀": "如果这张牌在你的回合中造成了过量的伤害，它会产生额外的效果。",
+  "对战开始时": "对战一开始就会产生某种作用。",
+  "磁力": "将具有磁力的牌置于机械牌的左侧可使其合体！",
+  "跟班": "跟班是一类法力值消耗为（1）点的具有战吼的随从。",
+  "双生法术": "可以被施放两次。",
+  "超级风怒": "每个回合能够攻击四次。",
+  "复生": "在其首次死亡时复活，并具有1点生命值。",
+  "祈求": "使用迦拉克隆的技能。",
+  "流放": "在手牌中的最左或最右侧使用时触发的额外效果。",
+  "法术迸发": "在你施放一个法术后触发的一次性效果。",
+  "支线任务": "完成任务，获取奖励。",
+  "腐蚀": "当它在你的手牌中时，使用一张法力值消耗更高的牌就会使其升级。",
+  "任务线": "会出现在起始手牌中。完成任务，获取奖励，最多3步！",
+  "可交易": "可以将此牌拖入牌库，消耗1点法力值并另抽一张牌。",
+  "暴怒": "该随从第一次受到伤害并存活后触发的一次性效果。",
+  "荣誉消灭": "如果这张牌在你的回合中造成了刚好消灭目标的伤害，它会产生额外的效果。",
+  "自然法术伤害": "你的自然法术能造成额外的伤害。",
+  "鲜血宝石": "法术牌，使一个友方随从获得+1/+1。",
+  "刷新": "让酒馆换上新的卡牌。",
+  "复仇（X）": "在战斗阶段中，X个友方随从死亡后，它会产生一些效果。",
+  "巨型+X": "被召唤时会生成X个附属物。",
+  "探底": "检视你牌库底的3张牌，将其中一张置于牌库顶。",
+  "塑造法术": "每回合获得一张临时法术牌。",
+  "注能": "此牌在你手中时，在X个友方随从死亡后此牌会升级。",
+  "残骸": "当友方随从死亡时会获得的一种资源。",
+  "压轴": "当这张牌消耗了你剩余的所有法力值时触发的加成效果。",
+  "过量治疗": "受到的治疗溢出时触发的加成效果。",
+  "法力渴求（X）": "如果你有X个法力水晶，就会有加成效果。",
+  "烈毒": "可以消灭第一个受到其伤害的随从。",
+  "扰魔": "无法成为法术或英雄技能的目标。",
+  "锻造": "可以将此牌拖向牌库，消耗（2）点法力值以提升其效果。",
+  "泰坦": "点击泰坦不会使其攻击，而会弹出3个技能，你可以选择1个使用。",
+  "微缩": "获取本牌的一张法力值消耗为（1）的1/1复制。",
+  "微型": "某张牌的法力值消耗为（1）的1/1复制。",
+  "快枪": "如果在本回合中进入你的手牌则会有加成效果。",
+  "发掘": "挖出越来越稀有的宝藏。稀有度将在达到最高后重置。",
+  "传递": "送到你的队友的手中。",
+  "伙伴": "与各英雄技能配套的强力随从。",
+  "灌注": "获得一项新的英雄技能，你每灌注一次，该技能都会升级。",
+  "黑暗之赐": "附加在随从上的增益。",
+  "临时": "在你的回合结束时弃掉。",
+  "星舰": "星舰拥有你此前死亡的组件的属性值和效果。点击即可发射！",
+};
+// mechanics 代码 → 中文关键词（用于按 mechanics 标悬浮解释）
+const KEYWORD_SLUGS = {
+  "TAUNT": "嘲讽",
+  "SPELL-DAMAGE": "法术伤害",
+  "DIVINE-SHIELD": "圣盾",
+  "CHARGE": "冲锋",
+  "SECRET": "奥秘",
+  "STEALTH": "潜行",
+  "BATTLECRY": "战吼",
+  "FREEZE": "冻结",
+  "WINDFURY": "风怒",
+  "DEATHRATTLE": "亡语",
+  "COMBO": "连击",
+  "OVERLOAD:-X": "过载：X",
+  "SILENCE": "沉默",
+  "COUNTER": "反制",
+  "IMMUNE": "免疫",
+  "SPARE-PARTS": "备用零件",
+  "INSPIRE": "激励",
+  "DISCOVER": "发现",
+  "QUEST": "任务",
+  "POISONOUS": "剧毒",
+  "ADAPT": "进化",
+  "LIFESTEAL": "吸血",
+  "RECRUIT": "招募",
+  "ECHO": "回响",
+  "RUSH": "突袭",
+  "OVERKILL": "超杀",
+  "START-OF-GAME": "对战开始时",
+  "MAGNETIC": "磁力",
+  "LACKEY": "跟班",
+  "TWINSPELL": "双生法术",
+  "MEGA-WINDFURY": "超级风怒",
+  "REBORN": "复生",
+  "INVOKE": "祈求",
+  "OUTCAST": "流放",
+  "SPELLBURST": "法术迸发",
+  "SIDEQUEST": "支线任务",
+  "CORRUPT": "腐蚀",
+  "QUESTLINE": "任务线",
+  "TRADEABLE": "可交易",
+  "FRENZY": "暴怒",
+  "HONORABLE-KILL": "荣誉消灭",
+  "NATURE-SPELL-DAMAGE": "自然法术伤害",
+  "BLOOD-GEM": "鲜血宝石",
+  "REFRESH": "刷新",
+  "AVENGE-(X)": "复仇（X）",
+  "COLOSSAL-+X": "巨型+X",
+  "DREDGE": "探底",
+  "SPELLCRAFT": "塑造法术",
+  "INFUSE": "注能",
+  "CORPSE": "残骸",
+  "FINALE": "压轴",
+  "OVERHEAL": "过量治疗",
+  "MANATHIRST-(X)": "法力渴求（X）",
+  "VENOMOUS": "烈毒",
+  "ELUSIVE": "扰魔",
+  "FORGE\\T\\T": "锻造",
+  "TITAN": "泰坦",
+  "MINIATURIZE": "微缩",
+  "MINI": "微型",
+  "QUICKDRAW": "快枪",
+  "EXCAVATE": "发掘",
+  "PASS": "传递",
+  "BUDDY": "伙伴",
+  "IMBUE": "灌注",
+  "DARK-GIFT": "黑暗之赐",
+  "TEMPORARY": "临时",
+  "STARSHIP": "星舰",
+};
+
+// ---------- 1. 关键词解释 ----------
+
+// 关键词查表：卡面写法可能带「（X）」「+X」等后缀，逐级回退
+function lookupKeyword(raw) {
+  const key = String(raw || "").trim();
+  if (!key) return "";
+  if (KEYWORD_DEFS[key]) return KEYWORD_DEFS[key];
+  const stripped = key.replace(/[（(].*?[)）]/g, "").replace(/[+＋]\s*\d+/g, "").replace(/\d+$/g, "").trim();
+  if (KEYWORD_DEFS[stripped]) return KEYWORD_DEFS[stripped];
+  // 「法术伤害」「自然法术伤害」这类前缀变体
+  const tail = stripped.replace(/^(自然|奥术|火焰|冰霜|神圣|暗影|邪能)/, "");
+  if (tail && KEYWORD_DEFS[tail]) return KEYWORD_DEFS[tail];
+  return "";
+}
+
+// 卡牌文本 → 安全 HTML：只保留 <b></b><i></i>，其余尖括号全部转义，
+// 并把命中关键词的 <b> 打上 data-kw 供悬浮解释使用（B10 的同类问题一并堵住）
+function renderCardTextHtml(text) {
+  const src = String(text || "");
+  const parts = src.split(/(<\/?(?:b|i)>)/i);
+  let html = "";
+  for (const part of parts) {
+    if (/^<\/?(?:b|i)>$/i.test(part)) html += part.toLowerCase();
+    else html += escapeHtml(part);
+  }
+  return html.replace(/<b>([^<]{1,14})<\/b>/g, function (m, inner) {
+    if (!lookupKeyword(inner)) return m;
+    return '<b class="kw" data-kw="' + escapeHtml(inner.trim()) + '">' + inner + "</b>";
+  });
+}
+
+let kwTipEl = null;
+function ensureKwTip() {
+  if (kwTipEl && kwTipEl.isConnected) return kwTipEl;
+  kwTipEl = document.createElement("div");
+  kwTipEl.className = "kw-tip";
+  kwTipEl.setAttribute("role", "tooltip");
+  document.body.appendChild(kwTipEl);
+  return kwTipEl;
+}
+
+function showKwTip(target) {
+  const kw = target.getAttribute("data-kw");
+  const def = lookupKeyword(kw);
+  if (!kw || !def) return;
+  const tip = ensureKwTip();
+  tip.innerHTML = '<span class="kw-tip-name">' + escapeHtml(kw) + "</span>" + escapeHtml(def);
+  tip.classList.add("show");
+  const r = target.getBoundingClientRect();
+  const tr = tip.getBoundingClientRect();
+  let left = r.left + r.width / 2 - tr.width / 2;
+  left = Math.max(10, Math.min(left, window.innerWidth - tr.width - 10));
+  let top = r.top - tr.height - 8;
+  if (top < 10) top = r.bottom + 8;
+  tip.style.left = Math.round(left) + "px";
+  tip.style.top = Math.round(top) + "px";
+}
+
+function hideKwTip() {
+  if (kwTipEl) kwTipEl.classList.remove("show");
+}
+
+document.addEventListener("mouseover", function (e) {
+  const t = e.target && e.target.closest ? e.target.closest("[data-kw]") : null;
+  if (t) showKwTip(t); else hideKwTip();
+});
+document.addEventListener("focusin", function (e) {
+  const t = e.target && e.target.closest ? e.target.closest("[data-kw]") : null;
+  if (t) showKwTip(t); else hideKwTip();
+});
+document.addEventListener("scroll", hideKwTip, true);
+window.addEventListener("resize", hideKwTip);
+
+// ---------- 5. 卡牌库排序方式 ----------
+
+const SORT_OPTIONS = [
+  ["default", "默认（可收藏优先）"],
+  ["cost-asc", "法力：低到高"],
+  ["cost-desc", "法力：高到低"],
+  ["attack-asc", "攻击：低到高"],
+  ["attack-desc", "攻击：高到低"],
+  ["health-asc", "生命：低到高"],
+  ["health-desc", "生命：高到低"],
+  ["name", "名称"],
+  ["new", "最新"],
+];
+
+function sortCardList(list, sort) {
+  const num = (v, dflt) => (v === undefined || v === null ? dflt : v);
+  const byName = (a, b) => a.name.localeCompare(b.name, "zh-Hans-CN");
+  const cmp = function (a, b) {
+    switch (sort) {
+      case "cost-asc": return num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      case "cost-desc": return num(b.cost, -1) - num(a.cost, -1) || byName(a, b);
+      case "attack-asc": return num(a.attack, 99) - num(b.attack, 99) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      case "attack-desc": return num(b.attack, -1) - num(a.attack, -1) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      case "health-asc": return num(a.health, 99) - num(b.health, 99) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      case "health-desc": return num(b.health, -1) - num(a.health, -1) || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      case "name": return byName(a, b);
+      case "new": return num(b.dbfId, 0) - num(a.dbfId, 0);
+      default: {
+        const ca = isCollectible(a) ? 0 : 1, cb = isCollectible(b) ? 0 : 1;
+        return ca - cb || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
+      }
+    }
+  };
+  list.sort(cmp);
+  return list;
+}
+
+function buildSortDropdown() {
+  const wrap = document.getElementById("sortDropdowns");
+  if (!wrap || wrap.dataset.init) return;
+  wrap.dataset.init = "1";
+  searchState.sort = searchState.sort || "default";
+  hsCreateDropdown({
+    mount: wrap,
+    label: "排序方式",
+    options: SORT_OPTIONS,
+    value: searchState.sort,
+    clearLabel: "恢复默认排序",
+    onPick: function (v) {
+      searchState.sort = v || "default";
+      doCardSearch(1);
+    }
+  });
+}
+
+// ---------- 4. 死亡骑士符文校验 ----------
+
+const RUNE_LIMIT = 3;
+const RUNE_KINDS = [["blood", "血"], ["frost", "冰"], ["unholy", "邪"]];
+
+function cardRunes(card) {
+  const r = card && card.runeCost;
+  if (!r) return null;
+  const blood = r.blood | 0, frost = r.frost | 0, unholy = r.unholy | 0;
+  if (blood + frost + unholy === 0) return null;
+  return { blood: blood, frost: frost, unholy: unholy };
+}
+
+// 卡组当前需要的符文数 = 每类符文在卡牌中的最大值（官方规则：上限 3 点）
+function deckRuneNeed(extraCard) {
+  const need = { blood: 0, frost: 0, unholy: 0 };
+  const take = function (c) {
+    const r = cardRunes(c);
+    if (!r) return;
+    need.blood = Math.max(need.blood, r.blood);
+    need.frost = Math.max(need.frost, r.frost);
+    need.unholy = Math.max(need.unholy, r.unholy);
+  };
+  deckState.cards.forEach(function (e) { take(e.card); });
+  if (extraCard) take(extraCard);
+  return { need: need, total: need.blood + need.frost + need.unholy };
+}
+
+function runeText(need) {
+  const out = [];
+  RUNE_KINDS.forEach(function (k) { if (need[k[0]] > 0) out.push(k[1] + need[k[0]]); });
+  return out.join(" ") || "无";
+}
+
+function runeConflictMessage(card) {
+  const res = deckRuneNeed(card);
+  if (res.total <= RUNE_LIMIT) return "";
+  return "符文冲突：" + card.name + " 会让卡组需要 " + runeText(res.need) +
+    "（共 " + res.total + " 点，上限 " + RUNE_LIMIT + " 点）";
+}
+
+function renderDeckRunes() {
+  const box = document.getElementById("deckRunes");
+  if (!box) return;
+  const res = deckRuneNeed(null);
+  const hasAny = res.total > 0 || (deckState.hero && deckState.hero.cardClass === "DEATHKNIGHT");
+  if (!hasAny) {
+    box.style.display = "none";
+    box.innerHTML = "";
+    return;
+  }
+  box.style.display = "flex";
+  let html = "";
+  RUNE_KINDS.forEach(function (k) {
+    const key = k[0], cn = k[1], n = res.need[key];
+    html += '<span class="rune-pill rune-' + key + (n ? "" : " rune-zero") + '" title="' + cn + "符文需求：" + n + '">' +
+      cn + " " + n + "</span>";
+  });
+  html += '<span class="deck-rune-total' + (res.total > RUNE_LIMIT ? " over" : "") + '">' +
+    res.total + " / " + RUNE_LIMIT + "</span>";
+  box.innerHTML = html;
+}
+
+// 导入/解码得到卡组后统一复查一次（只提示，不删卡：用户可能想自己改）
+function warnDeckRunes() {
+  const res = deckRuneNeed(null);
+  if (res.total > RUNE_LIMIT) {
+    toast("符文超限：" + runeText(res.need) + "（共 " + res.total + " 点，上限 " + RUNE_LIMIT + " 点）");
+  }
+}
+
+// ---------- 3. 卡组长图 ----------
+
+function posterEntries() {
+  const list = [];
+  deckState.cards.forEach(function (e) { list.push({ card: e.card, count: e.count }); });
+  list.sort(function (a, b) {
+    const ca = deckDisplayCost(a.card), cb = deckDisplayCost(b.card);
+    if (ca !== cb) return ca - cb;
+    return a.card.name.localeCompare(b.card.name, "zh-Hans-CN");
+  });
+  return list;
+}
+
+function loadPix(url) {
+  return new Promise(function (resolve) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    // 图床慢/不通时不能把长图卡死：8 秒没回来就当作无图（该卡面走文字兜底）
+    const timer = setTimeout(function () { resolve(null); }, 8000);
+    img.onload = function () { clearTimeout(timer); resolve(img); };
+    img.onerror = function () { clearTimeout(timer); resolve(null); };
+    img.src = url;
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const chars = String(text || "").split("");
+  const lines = [];
+  let line = "";
+  for (const ch of chars) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// 生成卡组长图，返回 PNG Blob
+async function renderDeckPosterBlob(entries) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = 780;
+  const PAD = 34;
+  const COLS = 4;
+  const CW = 156, CH = 227, GX = (W - PAD * 2 - COLS * CW) / (COLS - 1), GY = 18;
+  const rows = Math.ceil(entries.length / COLS);
+  const HEAD = 150, CURVE = 104, FOOT = 158;
+  const H = PAD * 2 + HEAD + CURVE + rows * (CH + 26 + GY) + FOOT;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  // 背景：深色渐变 + 顶部金色光晕
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#1b1520");
+  bg.addColorStop(0.5, "#171218");
+  bg.addColorStop(1, "#120e14");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.5, 0, 0, W * 0.5, 0, W * 0.9);
+  glow.addColorStop(0, "rgba(197,148,61,0.22)");
+  glow.addColorStop(1, "rgba(197,148,61,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, HEAD + 60);
+
+  // 标题
+  const heroName = deckState.hero ? (deckState.hero.name || "") : "未选择英雄";
+  const heroClass = deckState.hero ? (DB.maps.class[deckState.hero.cardClass] || "") : "";
+  const fmtText = deckState.format === 1 ? "狂野" : "标准";
+  const total = entries.reduce(function (a, e) { return a + e.count; }, 0);
+
+  ctx.fillStyle = "#f4e9d6";
+  ctx.font = "700 30px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  const deckName = deckState.deckName || "HsTool 卡组";
+  ctx.fillText(deckName, PAD, PAD + 34);
+
+  ctx.font = "15px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillStyle = "#c2ae90";
+  const runeRes = deckRuneNeed(null);
+  const sub = [heroClass ? heroName + " · " + heroClass : heroName, fmtText, total + " 张"]
+    .concat(runeRes.total > 0 ? ["符文 " + runeText(runeRes.need)] : [])
+    .join("   ·   ");
+  ctx.fillText(sub, PAD, PAD + 64);
+
+  // 粉尘
+  let dust = 0, goldDust = 0;
+  deckState.cards.forEach(function (e) {
+    dust += (DUST_COST[e.card.rarity] || 0) * e.count;
+    goldDust += (DUST_COST_GOLD[e.card.rarity] || 0) * e.count;
+  });
+  ctx.fillStyle = "#c5943d";
+  ctx.font = "600 15px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("奥术之尘 " + dust.toLocaleString() + " / 金 " + goldDust.toLocaleString(), PAD, PAD + 92);
+
+  // 品牌角标
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#8d7c66";
+  ctx.font = "600 14px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("HsTool · hstool.pages.dev", W - PAD, PAD + 30);
+  ctx.textAlign = "left";
+
+  // 法力曲线
+  const buckets = new Array(8).fill(0);
+  deckState.cards.forEach(function (e) {
+    const idx = Math.min(7, Math.floor(deckDisplayCost(e.card)));
+    buckets[idx] += e.count;
+  });
+  const maxB = Math.max.apply(null, buckets) || 1;
+  const curveTop = PAD + HEAD;
+  const barW = (W - PAD * 2) / 8 - 14;
+  ctx.strokeStyle = "rgba(197,148,61,0.28)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PAD, curveTop + 66);
+  ctx.lineTo(W - PAD, curveTop + 66);
+  ctx.stroke();
+  for (let i = 0; i < 8; i++) {
+    const x = PAD + i * ((W - PAD * 2) / 8);
+    const h = buckets[i] ? Math.max(6, Math.round((buckets[i] / maxB) * 54)) : 0;
+    if (h) {
+      const g = ctx.createLinearGradient(0, curveTop + 66 - h, 0, curveTop + 66);
+      g.addColorStop(0, "#e8c277");
+      g.addColorStop(1, "rgba(197,148,61,0.35)");
+      ctx.fillStyle = g;
+      roundRect(ctx, x + 6, curveTop + 66 - h, barW, h, 3);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#8d7c66";
+    ctx.font = "11px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(i === 7 ? "7+" : String(i), x + 6 + barW / 2, curveTop + 80);
+    if (buckets[i]) {
+      ctx.fillStyle = "#d9c08a";
+      ctx.fillText(String(buckets[i]), x + 6 + barW / 2, curveTop + 66 - h - 5);
+    }
+    ctx.textAlign = "left";
+  }
+
+  // 卡牌网格
+  const gridTop = PAD + HEAD + CURVE;
+  const urls = entries.map(function (e) { return posterImgUrl(e.card); });
+  const pix = await Promise.all(urls.map(loadPix));
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const col = i % COLS, row = Math.floor(i / COLS);
+    const x = PAD + col * (CW + GX);
+    const y = gridTop + row * (CH + 26 + GY);
+
+    // 卡位底
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    roundRect(ctx, x, y, CW, CH, 10);
+    ctx.fill();
+
+    const img = pix[i];
+    ctx.save();
+    roundRect(ctx, x, y, CW, CH, 10);
+    ctx.clip();
+    if (img) {
+      ctx.drawImage(img, x, y, CW, CH);
+    } else {
+      // 图床不可用时的兜底卡面：名称 + 费用
+      ctx.fillStyle = "#2a2130";
+      ctx.fillRect(x, y, CW, CH);
+      ctx.fillStyle = "#e6d8bf";
+      ctx.font = "600 14px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+      const lines = wrapText(ctx, e.card.name, CW - 20).slice(0, 4);
+      lines.forEach(function (ln, k) { ctx.fillText(ln, x + 10, y + 34 + k * 20); });
+    }
+    ctx.restore();
+
+    // 费用角标
+    const cost = deckDisplayCost(e.card);
+    ctx.beginPath();
+    ctx.arc(x + 17, y + 17, 13, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(12,9,14,0.82)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(232,194,119,0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#f0dfb8";
+    ctx.font = "700 14px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(String(cost == null ? "-" : cost), x + 17, y + 22);
+    ctx.textAlign = "left";
+
+    // 份数角标
+    if (e.count > 1) {
+      const label = "×" + e.count;
+      ctx.font = "700 13px 'Segoe UI', sans-serif";
+      const tw = ctx.measureText(label).width + 14;
+      ctx.fillStyle = "rgba(12,9,14,0.82)";
+      roundRect(ctx, x + CW - tw - 6, y + CH - 24, tw, 18, 9);
+      ctx.fill();
+      ctx.fillStyle = "#e8c277";
+      ctx.textAlign = "center";
+      ctx.fillText(label, x + CW - tw / 2 - 6, y + CH - 11);
+      ctx.textAlign = "left";
+    }
+
+    // 名称
+    ctx.fillStyle = "#cdb894";
+    ctx.font = "12.5px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+    ctx.textAlign = "center";
+    const nameLines = wrapText(ctx, e.card.name, CW);
+    ctx.fillText(nameLines[0] || "", x + CW / 2, y + CH + 16);
+    ctx.textAlign = "left";
+  }
+
+  // 页脚：卡组码 + 署名
+  let fy = gridTop + rows * (CH + 26 + GY) + 18;
+  ctx.strokeStyle = "rgba(197,148,61,0.3)";
+  ctx.beginPath();
+  ctx.moveTo(PAD, fy);
+  ctx.lineTo(W - PAD, fy);
+  ctx.stroke();
+  fy += 22;
+
+  let code = "";
+  try {
+    code = encodeDeckstring(
+      deckState.hero ? [deckState.hero.dbfId] : [],
+      Array.from(deckState.cards.values()).map(function (e) { return [e.card.dbfId, e.count]; }),
+      deckState.format,
+      undefined,
+      deckState.bands.size ? Array.from(deckState.bands.entries()).map(function (kv) {
+        return [Number(kv[0]), kv[1].size];
+      }) : null
+    );
+  } catch (err) {
+    code = "";
+  }
+
+  ctx.fillStyle = "#7f6f5c";
+  ctx.font = "11.5px Consolas, 'Courier New', monospace";
+  if (code) {
+    const codeLines = wrapText(ctx, code, W - PAD * 2).slice(0, 5);
+    codeLines.forEach(function (ln, k) { ctx.fillText(ln, PAD, fy + k * 17); });
+    fy += codeLines.length * 17 + 8;
+  }
+  ctx.fillStyle = "#5f5347";
+  ctx.font = "11px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("由 HsTool 生成 · 卡牌数据来自 HearthstoneJSON · 鼠标右键另存 / 手机长按保存", PAD, fy + 12);
+
+  return new Promise(function (resolve, reject) {
+    try {
+      canvas.toBlob(function (blob) {
+        if (blob) resolve(blob);
+        else reject(new Error("画布导出为空"));
+      }, "image/png");
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+async function exportDeckPoster() {
+  const entries = posterEntries();
+  if (!entries.length) {
+    toast("卡组是空的，先加几张卡");
+    return;
+  }
+  toast("正在生成长图…");
+  try {
+    const blob = await renderDeckPosterBlob(entries);
+    const safe = String(deckState.deckName || "HsTool卡组").replace(/[\\/:*?"<>|]/g, "_");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = safe + ".png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+    toast("长图已生成：" + safe + ".png");
+  } catch (err) {
+    toast("长图生成失败：" + (err && err.message ? err.message : "未知错误"));
+  }
+}
+
+// 初始化：排序下拉（组卡器页首次进入时挂载）
+(function () {
+  const tryInit = function () { buildSortDropdown(); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tryInit);
+  else tryInit();
+})();
