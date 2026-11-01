@@ -1147,6 +1147,22 @@
     background: var(--card);
     z-index: 2;
   }
+  /* 悬停放大卡牌（设置 → 功能 → 悬停放大卡牌）。
+     只作用于卡牌库网格；组卡器列表那侧走的是「悬停预览」浮层，互不干扰。
+     注意 .card-grid 是 overflow-y:auto —— 按 CSS 规范另一轴会从 visible 计算成 auto，
+     而溢出裁剪发生在 padding box 边界，所以放大模式下必须给网格留出足够内边距：
+     卡宽约 169px、放大 1.1 倍即四周各外扩约 8.5px（垂直 275px 高时约 14px），
+     给到 16px 后最边一行的放大卡才不会被切角（实测 13px 时首行仍差 1px）。 */
+  body.card-hover-zoom .card-grid { padding: 16px; }
+  body.card-hover-zoom .card-item {
+    transition: box-shadow var(--motion-short), border-color var(--motion-short),
+                background var(--motion-short), transform var(--motion-short);
+  }
+  body.card-hover-zoom .card-item:hover {
+    transform: scale(1.1);
+    /* 必须抬到相邻卡之上，否则放大部分会被后一张卡盖住 */
+    z-index: 30;
+  }
   .card-item img {
     width: 100%;
     display: block;
@@ -1466,10 +1482,10 @@
     align-items: center;
     justify-content: center;
     padding-bottom: 3px;
-    font-size: 30px;
+    font-size: 31px;
     font-weight: 700;
     /* 必须显式给 line-height：本元素会继承 body 的绝对行高 25.6px，
-       而 30px 字号的字形高于 25.6px，上下会被裁掉（与 §14.3 同类问题）。
+       而 31px 字号的字形高于 25.6px，上下会被裁掉（与 §14.3 同类问题）。
        数字没有下伸部，line-height:1 已足够，且能让数字在六边形里精确居中。 */
     line-height: 1;
     color: #ffffff;
@@ -1498,7 +1514,7 @@
   .deck-row.attached .cost-badge {
     width: 26px;
     height: 25px;
-    font-size: 20px;
+    font-size: 21px;
     padding-bottom: 2px;
     line-height: 1;                 /* 同主水晶：避免继承 25.6px 绝对行高裁字 */
     /* 附属卡（奇闻 token）沿用绿水晶；图片本身来自 ::before，这里只改色相 */

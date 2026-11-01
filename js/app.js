@@ -1055,6 +1055,7 @@ const SETTINGS_KEY = "hstool-settings";
 const DEFAULT_SETTINGS = {
   // —— 功能 ——
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
+  cardHoverZoom:      true,   // 悬停放大卡牌（OFF = 卡牌库网格悬停不再放大）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
@@ -1124,6 +1125,8 @@ function applySettings() {
   b.classList.toggle("flat-ui",   !settings.md3Style);
   b.classList.toggle("compact-mode", settings.compactMode);
   b.classList.toggle("force-reduce-motion", settings.reduceMotion);
+  // 悬停放大卡牌：卡牌库网格里 hover 时把整张卡放大（见 CSS body.card-hover-zoom）
+  b.classList.toggle("card-hover-zoom", settings.cardHoverZoom);
   // 关闭「水晶颜色」时，所有法力水晶统一回退到基准蓝色（见 CSS .crystal-mono）
   b.classList.toggle("crystal-mono", !settings.crystalColor);
   applyBgVisibility(settings.bgVisibility);
