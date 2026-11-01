@@ -1383,7 +1383,7 @@ function loadSets() {
   } catch (e) {
     clearInterval(timer);
     subEl.textContent = "卡牌数据加载失败：" + (e.message || e) +
-      "（请确认 cards.json 与 cards-meta.json 与本页在同一目录）";
+      "（请确认 data/hearthstone_cards_zhCN.json 与 data/cards-meta.json 存在且可访问）";
     subEl.style.color = "#ef4444";
     dot.className = "status-dot err";
     txt.textContent = "加载失败";
