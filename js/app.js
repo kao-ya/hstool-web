@@ -3253,6 +3253,7 @@ function playDeckFlyAnim(card) {
     el.style.backgroundRepeat = "no-repeat";
   }
 
+  el.style.opacity = "0";
   document.body.appendChild(el);
 
   const dx = b.left - startLeft;
@@ -3277,15 +3278,10 @@ function playDeckFlyAnim(card) {
     else setTimeout(done, 740);
   };
 
-  // 等这一行底图解码完再起飞（最多 260ms），否则飞的是空条带
-  if (stripBg && !stripBg.complete && typeof stripBg.decode === "function") {
-    let kicked = false;
-    const kick = function () { if (!kicked) { kicked = true; startFly(); } };
-    stripBg.decode().then(kick, kick);
-    setTimeout(kick, 260);
-  } else {
-    startFly();
-  }
+  // 立刻起飞：之前为了等底图解码最多要停 260ms，体感就是「条带在起点卡一下」。
+  // 底图没就绪也不会空白 —— el 自己的 background-image 已经铺了来源卡图，
+  // 解码完成后 .row-bg 自然盖上去，中途无缝。
+  startFly();
 }
 
 async function addCardToDeck(card) {
