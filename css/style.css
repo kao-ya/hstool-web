@@ -1383,8 +1383,6 @@
     /* 关键：flex 子项默认 min-height:auto（= 内容高度），不写 0 就压不下去；
        卡组一多它会顶破侧栏，看起来就是「列表限高失效」。 */
     min-height: 0;
-    /* 把列表的绘制关在自己的层里：外面按钮的重绘不会牵连整块列表重新栅格化 */
-    contain: paint;
     /* 可滚动但不显示滚动条：滚动能力保留，视觉上不出现竖条 */
     scrollbar-width: none;          /* Firefox / 新版 Chromium */
     -ms-overflow-style: none;       /* 旧版 Edge */
@@ -1426,7 +1424,6 @@
     /* 只过渡高亮层，不对整行做 filter（filter 会触发整块重绘，在列表里移动鼠标时像在抖） */
     transition: box-shadow 0.15s;
     /* 每行自成一个绘制单元：悬停只重绘这一行，不牵连整条列表 */
-    contain: paint;
   }
   .deck-row:hover {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 0 0 999px rgba(255, 255, 255, 0.045);
@@ -1927,14 +1924,9 @@
     color: var(--on-primary);
     border: none;
     cursor: pointer;
-    /* 不能用 filter 做悬停提亮：侧栏是 scale(0.88) 的变换层，层内元素加 filter 会
-       让 Chrome 把整个缩放子树重新栅格化 —— 逐帧重采样会导致相邻列表看着在抖。 */
-    transition: background-color 0.15s, box-shadow 0.15s;
+    transition: filter 0.15s, box-shadow 0.15s;
   }
-  .deck-sidebar-footer .btn-row .btn-import-mini:hover {
-    background: color-mix(in srgb, var(--primary) 86%, #ffffff);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
+  .deck-sidebar-footer .btn-row .btn-import-mini:hover { filter: brightness(1.1); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
   .deck-sidebar-footer .btn-row .btn-export-big {
     flex: 1;
     justify-content: center;
