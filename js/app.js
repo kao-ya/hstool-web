@@ -3216,6 +3216,12 @@ function playDeckFlyAnim(card) {
   const b = row.getBoundingClientRect();
   if (a.width < 8 || a.height < 8 || b.width < 8 || b.height < 8) return;
 
+  // 落点那一行先藏起来（visibility 不改变布局，rect 仍然有效）：
+  // renderDeckCards() 到 playDeckFlyAnim() 是同一个任务内，浏览器还没绘制，
+  // 所以在这里藏住就不会出现「卡还没飞过去，列表里已经先冒出来」。
+  const prevVis = row.style.visibility;
+  row.style.visibility = "hidden";
+
   // 飞的是「条形卡」：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞）
   const el = row.cloneNode(true);
   el.className = "deck-row fly-strip";
@@ -3262,6 +3268,7 @@ function playDeckFlyAnim(card) {
     ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
     const done = function () {
       el.remove();
+      row.style.visibility = prevVis || "";
       row.classList.add("fly-arrive");
       setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
     };
