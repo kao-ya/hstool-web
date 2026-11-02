@@ -2576,6 +2576,9 @@ function isNoArtType(cardOrId) {
 const SIGNATURE_INDEX_URL = "data/cards-signatures.json";
 let signatureIndex = null;      // Map<cardId, {dbfId,url}>
 let signatureLoading = null;
+// 单卡异画探测缓存：cardId -> "yes" | "no" | Promise<boolean>
+// 索引只是「预筛表」，可能过期或漏卡；最终以代理真实返回为准。
+const sigProbe = new Map();
 
 function loadSignatureIndex() {
   if (signatureIndex) return Promise.resolve(signatureIndex);
@@ -2604,11 +2607,43 @@ function hasSignatureArt(cardOrId) {
 // 异画图 URL：该卡有异画时返回，否则空串（只有卡牌详情会用到）
 // size 与普通卡图一致（256x / 512x），转成代理的 w 参数走已裁好的缩略图
 function signatureImgUrl(cardOrId, size) {
-  if (!signatureIndex) return "";
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
-  if (!id || !signatureIndex.has(id)) return "";
+  if (!id) return "";
   const w = size === "512x" ? 512 : (size === "1024x" ? 1024 : 256);
   return "api/hs-signature?card=" + encodeURIComponent(id) + "&w=" + w;
+}
+
+// 该卡是否已确认有异画（只有探测成功过才算，避免放出点了没图的按钮）
+function sigKnownYes(cardOrId) {
+  const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
+  return !!id && sigProbe.get(id) === "yes";
+}
+
+// 真正去问一次「这张卡有没有异画」：加载一张 256 宽的异画缩略图，
+// onload 说明有、onerror 说明没有（代理对缺图返 502）。结果永久缓存。
+function probeSignatureArt(cardOrId) {
+  const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
+  if (!id) return Promise.resolve(false);
+  const hit = sigProbe.get(id);
+  if (hit === "yes") return Promise.resolve(true);
+  if (hit === "no") return Promise.resolve(false);
+  if (hit && typeof hit.then === "function") return hit;
+  const p = new Promise(function (resolve) {
+    let done = false;
+    const end = function (ok) {
+      if (done) return;
+      done = true;
+      sigProbe.set(id, ok ? "yes" : "no");
+      resolve(ok);
+    };
+    const img = new Image();
+    img.onload = function () { end(true); };
+    img.onerror = function () { end(false); };
+    img.src = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256";
+    setTimeout(function () { end(false); }, 8000);
+  });
+  sigProbe.set(id, p);
+  return p;
 }
 
 // 切换「异画卡图」后，已经渲染出来的 <img> 不会自己换源，需要重画一次
@@ -2902,7 +2937,9 @@ function detailToolbarHtml(c) {
   // 异画按钮先隐藏：异画索引是异步拉的，加载完由 showCardDetail 决定要不要放出来
   // 英文模式下不显示异画按钮：两者都换图源，同时开着只会让人困惑。
   // 异画索引可能是异步才就绪，这里先按「当前已知有没有」判断，索引加载完由 showCardDetail 补正。
-  const sigHidden = (detailLang === "en") || !hasSignatureArt(c);
+  // 索引命中就先放出来（不等网络）；索引漏收录的卡靠 probeSignatureArt 兜底，
+  // 探测失败（代理 502 / 图不存在）时再把按钮收回去。英文模式下不显示。
+  const sigHidden = (detailLang === "en") || !(sigKnownYes(c) || hasSignatureArt(c));
   const sigBtn = '<button type="button" class="detail-toggle" id="detailSigBtn"' + (sigHidden ? " hidden" : "") + '>' +
     (detailSig ? "看普通卡面" : "看异画卡面") + "</button>";
   const langBtn = '<button type="button" class="detail-toggle" id="detailLangBtn">' +
@@ -3002,11 +3039,14 @@ async function showCardDetail(dbfId) {
     if (seq !== detailSeq) return;
     cardCache.set(c.dbfId, c);
     renderDetail(c);
-    // 异画索引按需加载：加载完再看这张卡有没有异画，有才把按钮放出来
+    // 先看索引（快、离线可用），索引没收录或想让结果更可信时，再探测一次真实图。
     loadSignatureIndex().then(function () {
+      if (seq !== detailSeq) return;
+      return probeSignatureArt(c);
+    }).then(function (ok) {
       const btn = document.getElementById("detailSigBtn");
       if (!btn || seq !== detailSeq) return;
-      btn.hidden = (detailLang === "en") || !hasSignatureArt(c);
+      btn.hidden = (detailLang === "en") || !ok;
     }).catch(function () {});
   } catch (e) {
     body.innerHTML = '<div></div><div class="empty-state">加载失败：' + escapeHtml(e.message) + '</div>';
@@ -3262,11 +3302,12 @@ function playDeckFlyAnim(card) {
   const startFly = function () {
     if (started) return;
     started = true;
+    // 起飞全程不加缩放：条带从起点到落点始终是「右侧卡组行」的真实尺寸。
     const anim = el.animate([
-      { transform: "translate3d(0,0,0) scale(0.72)", opacity: 0, filter: "brightness(1.3)" },
-      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0) scale(1.06)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
-      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0) scale(1.02)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
-      { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(1)", opacity: 1, filter: "brightness(1)" }
+      { transform: "translate3d(0,0,0)", opacity: 0, filter: "brightness(1.3)" },
+      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
+      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
+      { transform: "translate3d(" + dx + "px," + dy + "px,0)", opacity: 1, filter: "brightness(1)" }
     ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
     const done = function () {
       el.remove();
@@ -4961,6 +5002,27 @@ const KEYWORD_DEFS = {
   "黑暗之赐": "附加在随从上的增益。",
   "临时": "在你的回合结束时弃掉。",
   "星舰": "星舰拥有你此前死亡的组件的属性值和效果。点击即可发射！",
+  "星舰组件": "星舰的零件。它死亡后会被组装进你的星舰，星舰发射时一起登场。",
+  "古神": "上古之神。带有「古神」的牌属于上古之神系列，通常拥有能左右整局对战的强力效果。",
+  "抉择": "德鲁伊专属。打出时从两个效果中选择一个；牌面标注可以选择两次的，可以各选一次。",
+  "休眠": "随从进入休眠状态：在满足其醒来条件前，它不能攻击，也不能被攻击或被指定为目标。",
+  "传说": "传说品质。同一套卡组中，同名的传说卡牌只能放入 1 张。",
+  "奖励": "完成任务或任务线后获得的强力卡牌，不占用卡组位置。",
+  "青玉魔像": "玉莲帮专属召唤物。每被召唤一次就比上一次更大（+1/+1）。",
+  "额外效果": "从嘲讽、圣盾、吸血、风怒、剧毒、突袭等关键词中随机获得一项。",
+  "交易": "可以支付 1 点法力值把这张牌洗回你的牌库，并抽一张牌。",
+  "可交易": "可以支付 1 点法力值把这张牌洗回你的牌库，并抽一张牌。",
+  "激怒": "该随从受伤时会触发「激怒」后面的效果。",
+  "双生": "双生法术。打出后会在你手中留下一张它的复制。",
+  "磁力吸附": "带有磁力的牌可以吸附到机械随从身上并与之合体。",
+  "被动": "被动英雄技能：不需要主动使用，会一直生效。",
+  "抽到时施放": "抽到这张牌的瞬间立即施放，不会进入你的手牌。",
+  "抽到时召唤": "抽到这张牌的瞬间直接召唤到战场。",
+  "秘密": "对手看不到这张牌的具体内容，在满足条件时自动触发。",
+  "可重复任务": "完成任务并领取奖励后，可以再次接取同一个任务。",
+  "奇闻": "带有「奇闻」的牌会把一整套专属卡牌一起加入你的卡组，并改变卡组容量或构成。",
+  "回溯": "打出后随机产生两种结果，由你选择保留其中一种。",
+  "零件": "备用零件的简称：法力值消耗为（1）点的效果法术。",
 };
 // mechanics 代码 → 中文关键词（用于按 mechanics 标悬浮解释）
 const KEYWORD_SLUGS = {

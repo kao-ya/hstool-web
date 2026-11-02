@@ -825,16 +825,31 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) 300px;
     gap: 16px;
-    align-items: start;
+    align-items: stretch;
+    /* 高度锁到视口（换算掉 0.92 的缩放）：整页不再上下滚动，
+       滚动只发生在左侧卡牌网格与右侧卡组列表内部。 */
+    height: calc((100vh - 184px) / 0.92);
+    min-height: 520px;
+    /* 行高必须显式定死：否则 grid 行高由内容（长网格）决定，
+       .preview-main 的 height:100% 会退化，右侧面板撑满也就失效了。 */
+    grid-template-rows: 100%;
     transform: scale(0.92);
     transform-origin: top right;
     margin-left: auto;
   }
   @media (max-width: 1100px) {
-    .preview-page { grid-template-columns: 1fr; transform: none; }
-    .deck-sidebar { position: static !important; max-height: 600px; }
+    .preview-page { grid-template-columns: 1fr; transform: none; height: auto; }
+    .deck-sidebar { position: static !important; max-height: 600px; height: auto; }
   }
-  .preview-main { min-width: 0; }
+  .preview-main { min-width: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+  /* 网格外层那层卡片本身也要成为 flex 容器，否则 .card-grid 的 flex:1 无处可依 */
+  .preview-main > .card.card-plain {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+  }
 
   .search-bar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
   .search-bar input {
@@ -1122,9 +1137,12 @@
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 14px;
-    max-height: 780px;
+    /* 由 flex 撑满剩余高度（原来写死 780px，短视口会顶上、长视口留白） */
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
     padding: 6px;
+    align-content: start;
   }
   @media (max-width: 1600px) { .card-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
   @media (max-width: 1400px) { .card-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
@@ -1284,7 +1302,9 @@
   .deck-sidebar {
     position: sticky;
     top: 76px;
-    max-height: calc(100vh - 90px);
+    /* 高度按父级撑满；因为自身还有 0.88 的缩放，CSS 高度要除以 0.88 才能视觉占满 */
+    height: calc(100% / 0.88);
+    max-height: none;
     display: flex;
     flex-direction: column;
     background: var(--card);
