@@ -518,6 +518,10 @@ function friendlyError(e) {
 // 即便系列是 CORE 也不该被放行 —— 实测旧规则会把 CORE 里的 24 张附魔误判为可收藏。
 const COLLECTIBLE_TYPES = new Set(["MINION", "SPELL", "HERO", "WEAPON", "LOCATION"]);
 
+// 中文名称排序的共享 Collator：String.prototype.localeCompare 每次调用都要重新解析
+// locale 参数，比复用 Collator 慢；但它最大的开销是 ICU 本身（见下面的整数名次方案）。
+const NAME_COLLATOR = new Intl.Collator("zh-Hans-CN");
+
 // 「可收藏」裸判定（不依赖 normalizeCard，供其调用）。
 // 顺序：① 类型门 → ② 系列白/黑名单 → ③ 回落数据源字段。
 function isCollectibleRaw(c) {
@@ -629,6 +633,29 @@ async function loadCardDatabase() {
 
   // 自检：可收藏数、奇闻数，便于排查数据问题
   DB.curioCount = curioBases.length;
+
+  // 名称名次表：36 390 张卡的中文排序一次 ICU 校对约 130 ms。
+  // 放在首屏之后空闲时段做，做完之后任何一次「按名称 / 带名次兜底的数值排序」
+  // 都只比整数，切换排序不再有可感知的停顿。
+  scheduleNameRanks();
+}
+
+// ---- 名称名次表（只影响排序速度，不影响结果正确性）----
+function buildNameRanks() {
+  if (DB.nameRanksReady) return;
+  const arr = DB.cards.slice().sort((a, b) => NAME_COLLATOR.compare(a.name || "", b.name || ""));
+  for (let i = 0; i < arr.length; i++) arr[i].nameRank = i;
+  DB.nameRanksReady = true;
+}
+
+function scheduleNameRanks() {
+  if (DB.nameRanksReady || DB.nameRanksScheduled) return;
+  DB.nameRanksScheduled = true;
+  const run = function () {
+    try { buildNameRanks(); } catch (e) { /* 建表失败就退回 Collator，不影响功能 */ }
+  };
+  if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 300);
 }
 
 function toast(msg) {
@@ -2330,9 +2357,15 @@ async function doCardSearch(page) {
   const countEl = document.getElementById("cardCount");
   const paginationEl = document.getElementById("pagination");
 
-  grid.innerHTML = '<div class="empty-state"><span class="loading-spinner"></span>加载中…</div>';
-  paginationEl.style.display = "none";
-  countEl.textContent = "搜索中…";
+  // 已经有一批卡在屏幕上时（切换排序 / 翻页），不要先清空成「加载中…」：
+  // 那会先触发一次整页重排（200 张卡塌成一行文字），新卡到位后又重排一次，
+  // 中间还闪一下白。数据在本地、几十毫秒就回来，保持旧内容直到新内容就绪更稳。
+  const hadCards = grid.querySelectorAll(".card-item").length > 0;
+  if (!hadCards) {
+    grid.innerHTML = '<div class="empty-state"><span class="loading-spinner"></span>加载中…</div>';
+    paginationEl.style.display = "none";
+    countEl.textContent = "搜索中…";
+  }
 
   try {
     const offset = (searchState.page - 1) * PAGE_SIZE;
@@ -2360,12 +2393,13 @@ async function doCardSearch(page) {
 
     // 用上次缓存的卡片尺寸算「这批要立即加载多少张」；搜索/筛选/翻页统一走这里。
     cardImgEagerCount = computeEagerCount();
-    grid.innerHTML = "";
     // 渲染前重置观察器：上一批的 img 可能还挂在 observer 上，不清理会累积。
     resetCardImgObserver();
     const fragment = document.createDocumentFragment();
     r.cards.forEach((card, idx) => fragment.appendChild(createCardElement(card, idx)));
-    grid.appendChild(fragment);
+    // 一次性替换整批节点：清空 + 逐条 append 会有 200 次 DOM 变更，
+    // replaceChildren 只动一次（节点在片段里已经建好，不会触发布局）。
+    grid.replaceChildren(fragment);
     // 节点就位后记下真实尺寸，供下次渲染复用；再一次性启动 observer。
     measureCardItemSize();
     if (typeof IntersectionObserver !== "undefined") getCardImgObserver();
@@ -4875,7 +4909,12 @@ function sortFieldOf(key) {
 
 function sortCardList(list, sort) {
   const num = (v, dflt) => (v === undefined || v === null ? dflt : v);
-  const byName = (a, b) => a.name.localeCompare(b.name, "zh-Hans-CN");
+  // 名称比对：优先用载入时建好的整数名次（ICU 只排一次，之后是整数相减）；
+  // 名次还没建好时退回 Collator（只会在首屏那一瞬间发生）。
+  const byName = (a, b) =>
+    a.nameRank !== undefined && b.nameRank !== undefined
+      ? a.nameRank - b.nameRank
+      : NAME_COLLATOR.compare(a.name || "", b.name || "");
   const cmp = function (a, b) {
     switch (sort) {
       case "cost-asc": return num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
@@ -4888,7 +4927,9 @@ function sortCardList(list, sort) {
       case "name-desc": return byName(b, a);
       case "new": return num(b.dbfId, 0) - num(a.dbfId, 0);
       default: {
-        const ca = isCollectible(a) ? 0 : 1, cb = isCollectible(b) ? 0 : 1;
+        // normalizeCard 已经把可收藏判定算进 card.collectible，这里直接用，
+        // 不必每次比较都再走一遍 isCollectible（Set 查表 + 字符串比较）。
+        const ca = a.collectible ? 0 : 1, cb = b.collectible ? 0 : 1;
         return ca - cb || num(a.cost, 99) - num(b.cost, 99) || byName(a, b);
       }
     }
