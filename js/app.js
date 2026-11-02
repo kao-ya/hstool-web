@@ -3216,12 +3216,6 @@ function playDeckFlyAnim(card) {
   const b = row.getBoundingClientRect();
   if (a.width < 8 || a.height < 8 || b.width < 8 || b.height < 8) return;
 
-  // 落点那一行先藏起来（visibility 不改变布局，rect 仍然有效）：
-  // renderDeckCards() 到 playDeckFlyAnim() 是同一个任务内，浏览器还没绘制，
-  // 所以在这里藏住就不会出现「卡还没飞过去，列表里已经先冒出来」。
-  const prevVis = row.style.visibility;
-  row.style.visibility = "hidden";
-
   // 飞的是「条形卡」：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞）
   const el = row.cloneNode(true);
   el.className = "deck-row fly-strip";
@@ -3235,6 +3229,13 @@ function playDeckFlyAnim(card) {
   const startTop = a.top + a.height / 2 - b.height / 2;
   el.style.left = startLeft + "px";
   el.style.top = startTop + "px";
+  el.style.visibility = "visible";   // 克隆体必须显式可见，否则跟着藏行一起看不见
+
+  // 落点那一行再藏起来（visibility 不改变布局，上面算的 rect 依然有效）：
+  // renderDeckCards() 到 playDeckFlyAnim() 是同一个任务内，浏览器还没绘制，
+  // 所以藏在这里就不会出现「卡还没飞过去，列表里已经先冒出来」。
+  const prevVis = row.style.visibility;
+  row.style.visibility = "hidden";
 
   // 条带底图可能还没下载完（这一行刚渲染），用「点下去那张卡」的图兜底，
   // 保证飞的全程都有图像，而不是一条空条带。
