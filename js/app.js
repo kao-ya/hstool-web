@@ -3216,8 +3216,7 @@ function playDeckFlyAnim(card) {
   const b = row.getBoundingClientRect();
   if (a.width < 8 || a.height < 8 || b.width < 8 || b.height < 8) return;
 
-  // 飞的是「条形卡」，不是卡面：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞），
-  // 所以飞行途中看到的东西和落点那一行长得完全一样。
+  // 飞的是「条形卡」：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞）
   const el = row.cloneNode(true);
   el.className = "deck-row fly-strip";
   el.removeAttribute("data-card-id");
@@ -3230,24 +3229,55 @@ function playDeckFlyAnim(card) {
   const startTop = a.top + a.height / 2 - b.height / 2;
   el.style.left = startLeft + "px";
   el.style.top = startTop + "px";
+
+  // 条带底图可能还没下载完（这一行刚渲染），用「点下去那张卡」的图兜底，
+  // 保证飞的全程都有图像，而不是一条空条带。
+  const stripBg = el.querySelector(".row-bg");
+  if (stripBg) {
+    stripBg.loading = "eager";
+    stripBg.decoding = "sync";
+  }
+  const srcImg = src.querySelector ? src.querySelector("img") : null;
+  const srcUrl = srcImg && (srcImg.currentSrc || srcImg.src);
+  if (srcUrl) {
+    el.style.backgroundImage = 'url("' + srcUrl + '")';
+    el.style.backgroundSize = "cover";
+    el.style.backgroundPosition = "50% 25%";
+    el.style.backgroundRepeat = "no-repeat";
+  }
+
   document.body.appendChild(el);
 
-  // 从起点中心飞到目标行原位；中途略微上抛并轻微放大，落点严格对齐（dx/dy 是净位移）
   const dx = b.left - startLeft;
   const dy = b.top - startTop;
-  const anim = el.animate([
-    { transform: "translate3d(0,0,0) scale(0.72)", opacity: 0, filter: "brightness(1.3)" },
-    { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0) scale(1.06)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
-    { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0) scale(1.02)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
-    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(1)", opacity: 1, filter: "brightness(1)" }
-  ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
-  const done = function () {
-    el.remove();
-    row.classList.add("fly-arrive");
-    setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
+  let started = false;
+  const startFly = function () {
+    if (started) return;
+    started = true;
+    const anim = el.animate([
+      { transform: "translate3d(0,0,0) scale(0.72)", opacity: 0, filter: "brightness(1.3)" },
+      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0) scale(1.06)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
+      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0) scale(1.02)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
+      { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(1)", opacity: 1, filter: "brightness(1)" }
+    ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
+    const done = function () {
+      el.remove();
+      row.classList.add("fly-arrive");
+      setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
+    };
+    if (anim && anim.onfinish !== undefined) anim.onfinish = done;
+    else setTimeout(done, 740);
   };
-  if (anim && anim.onfinish !== undefined) anim.onfinish = done;
-  else setTimeout(done, 740);
+
+  // 等这一行底图解码完再起飞（最多 260ms），否则飞的是空条带
+  if (stripBg && !stripBg.complete && typeof stripBg.decode === "function") {
+    let kicked = false;
+    const kick = function () { if (!kicked) { kicked = true; startFly(); } };
+    stripBg.decode().then(kick, kick);
+    setTimeout(kick, 260);
+  } else {
+    startFly();
+  }
 }
 
 async function addCardToDeck(card) {
@@ -3532,7 +3562,6 @@ function renderDeckHeroCard() {
     card.innerHTML =
       '<img src="' + artUrl + '" data-fallback="' + fallbackUrl + '" alt="' + escapeHtml(deckState.hero.name) + '" ' +
       'onerror="if(!this.dataset.triedFallback){this.dataset.triedFallback=1;this.src=this.dataset.fallback;}else{this.style.display=\'none\';}">' +
-      '<div class="hero-runes" id="heroRunes"></div>' +
       '<div class="deck-name-label">' +
         '<span class="name">' + escapeHtml(deckState.deckName) + '</span>' +
         '<span class="hint">点击更换</span>' +
@@ -3543,7 +3572,6 @@ function renderDeckHeroCard() {
         '<div class="big-icon">' + ICON_SHIELD + '</div>' +
         '<div>点击选择英雄</div>' +
       '</div>' +
-      '<div class="hero-runes" id="heroRunes"></div>' +
       '<div class="deck-name-label">' +
         '<span class="name">' + escapeHtml(deckState.deckName) + '</span>' +
         '<span class="hint">点击选择</span>' +
@@ -3568,7 +3596,10 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
 
   const bg = document.createElement("img");
   bg.className = "row-bg";
-  bg.loading = "lazy";
+  // 不用 lazy：卡组行最多几十条，而「加卡飞入」会克隆这一行来飞 ——
+  // 懒加载会让克隆出来的条带图还没下载，飞的时候是空的。
+  bg.loading = "eager";
+  bg.decoding = "sync";
   if (isNoArtType(card)) {
     // 天然无图的类型（附魔 / 按钮 / 拖动）：行背景直接隐藏。
     // 不换成占位卡背——卡背放大铺在 40px 行底会很难看，让行自身底色透出来更干净。
@@ -5357,7 +5388,6 @@ function renderHeroRunes() {
   }
   const slots = heroRuneSlotValues();
   const need = deckRuneNeed(null).need;
-  const total = need.blood + need.frost + need.unholy;
   let html = "";
   for (let i = 0; i < 3; i++) {
     const key = slots[i];
@@ -5367,9 +5397,6 @@ function renderHeroRunes() {
       ' title="' + (key ? cn + "符文 — 点击切换" : "空符文 — 点击设置血/冰/邪") + '">' +
       '<img src="' + (key ? RUNE_IMAGES[key] : RUNE_EMPTY_IMAGE) + '" alt="' + cn + '" draggable="false"></button>';
   }
-  html += '<span class="hero-rune-total' + (total > RUNE_LIMIT ? " over" : "") + '"' +
-    ' title="卡组当前需要 血' + need.blood + " 冰" + need.frost + " 邪" + need.unholy + '">' +
-    total + "/" + RUNE_LIMIT + "</span>";
   box.style.display = "flex";
   box.innerHTML = html;
 }
