@@ -112,25 +112,31 @@ function decodeDeckstring(deckStr) {
   const fmt = readVarint(r);
   const heroDbf = readVarintList(r);
 
-  const singles = readVarintList(r).map(id => [id, 1]);
-  const doubles = readVarintList(r).map(id => [id, 2]);
-
-  // 乐队（sideboard）段：跳过「3张及以上」卡块，再读 0x01 标记 + 数量 + (卡, 归属) 对
-  const sideboard = [];
-  try {
-    const nBlock = readVarint(r);
-    for (let i = 0; i < nBlock; i++) { readVarint(r); readVarint(r); }
-    const marker = readVarint(r);
-    if (marker === 1) {
-      for (;;) {
-        const cnt = readVarint(r);
-        if (!cnt) break;
-        for (let i = 0; i < cnt; i++) sideboard.push([readVarint(r), readVarint(r)]);
+  // 主卡组三段：1 张 / 2 张 / 3 张以上（第三段的卡牌号后面才是份数）
+  const readCardBlocks = function (withOwner) {
+    const out = [];
+    for (let k = 1; k <= 3; k++) {
+      const n = readVarint(r);
+      for (let i = 0; i < n; i++) {
+        const id = readVarint(r);
+        const cnt = k < 3 ? k : readVarint(r);
+        if (withOwner) out.push([id, cnt, readVarint(r)]);
+        else out.push([id, cnt]);
       }
     }
-  } catch (e) { /* 无乐队段，正常 */ }
+    return out;
+  };
 
-  return { version, format: fmt, hero_dbf: heroDbf, cards: singles.concat(doubles), sideboard };
+  const cards = readCardBlocks(false);
+
+  // 乐队（sideboard）段：0 = 没有；1 = 后面同样是三段，每张卡后跟「归属卡 dbfId」
+  let sideboard = [];
+  try {
+    const marker = readVarint(r);
+    if (marker === 1) sideboard = readCardBlocks(true);
+  } catch (e) { /* 没有乐队段，正常 */ }
+
+  return { version, format: fmt, hero_dbf: heroDbf, cards: cards, sideboard: sideboard };
 }
 
 // ------------------------------------------------------------
@@ -139,34 +145,70 @@ function decodeDeckstring(deckStr) {
 function encodeDeckstring(heroes, cards, fmt, version, sideboard) {
   if (version === undefined || version === null) version = DEFAULT_VERSION;
   if (fmt === undefined || fmt === null) fmt = 1;
-  const bad = cards.filter(([, cnt]) => cnt !== 1 && cnt !== 2);
-  if (bad.length) throw new Error("卡牌数量只支持 1 或 2：" + JSON.stringify(bad));
 
   const out = [];
   writeVarint(out, HEADER_MAGIC);
   writeVarint(out, version);
   writeVarint(out, fmt);
 
-  writeVarint(out, heroes.length);
-  heroes.forEach(h => writeVarint(out, h));
+  const heroList = (heroes || []).slice().sort((a, b) => a - b);
+  writeVarint(out, heroList.length);
+  heroList.forEach(h => writeVarint(out, h));
 
-  const singles = cards.filter(([, c]) => c === 1).map(([id]) => id).sort((a, b) => a - b);
-  const doubles = cards.filter(([, c]) => c === 2).map(([id]) => id).sort((a, b) => a - b);
+  // 主卡组与乐队都按官方格式分三段：1 张 / 2 张 / 3 张以上（第三段才显式写数量）。
+  // 早期实现把乐队写成「1, 条数, (卡, 归属)×条数」，游戏会把它当成「1 张段」的条数，
+  // 于是同一张卡的份数被当成多条记录 —— 乐队里放两张同样的卡就会被读成两份单卡。
+  const splitByCount = function (list) {
+    const single = [], double = [], many = [];
+    list.forEach(function (t) {
+      const id = Number(t[0]), cnt = Number(t[1]);
+      if (!(id > 0) || !(cnt > 0)) return;
+      if (cnt === 1) single.push([id, 1]);
+      else if (cnt === 2) double.push([id, 2]);
+      else many.push([id, cnt]);
+    });
+    const byId = function (a, b) { return a[0] - b[0]; };
+    return [single.sort(byId), double.sort(byId), many.sort(byId)];
+  };
 
-  writeVarint(out, singles.length);
-  singles.forEach(id => writeVarint(out, id));
-  writeVarint(out, doubles.length);
-  doubles.forEach(id => writeVarint(out, id));
+  splitByCount(cards || []).forEach(function (list, k) {
+    writeVarint(out, list.length);
+    list.forEach(function (t) {
+      writeVarint(out, t[0]);
+      if (k === 2) writeVarint(out, t[1]);
+    });
+  });
 
-  writeVarint(out, 0);   // 「3张及以上」卡块：空
+  // 乐队（sideboard）：先写 1 表示存在，再写同样三段，每张卡后跟「归属卡 dbfId」
+  const sb = (sideboard || []).map(function (v) {
+    // 兼容两种调用：(卡, 归属) 视为 1 张；(卡, 份数, 归属)
+    const card = Number(v[0]);
+    const b = Number(v[1]);
+    const c = v.length > 2 ? Number(v[2]) : undefined;
+    return c === undefined ? [card, 1, b] : [card, b, c];
+  }).filter(function (t) { return t[0] > 0 && t[2] > 0; })
+    .sort(function (x, y) { return x[2] - y[2] || x[0] - y[0]; });
 
-  if (sideboard && sideboard.length) {
+  if (sb.length) {
     writeVarint(out, 1);
-    writeVarint(out, sideboard.length);
-    sideboard.forEach(([c, o]) => { writeVarint(out, c); writeVarint(out, o); });
-    writeVarint(out, 0); // 乐队段终止标记（缺了游戏不认）
+    const grouped = [[], [], []];
+    sb.forEach(function (t) {
+      const cnt = t[1] > 0 ? t[1] : 1;
+      if (cnt === 1) grouped[0].push([t[0], 1, t[2]]);
+      else if (cnt === 2) grouped[1].push([t[0], 2, t[2]]);
+      else grouped[2].push([t[0], cnt, t[2]]);
+    });
+    grouped.forEach(function (list, k) {
+      writeVarint(out, list.length);
+      list.forEach(function (t) {
+        writeVarint(out, t[0]);
+        if (k === 2) writeVarint(out, t[1]);
+        writeVarint(out, t[2]);
+      });
+    });
+  } else {
+    writeVarint(out, 0);   // 没有乐队也要写一个 0，官方格式如此
   }
-  writeVarint(out, TRAILER_MAGIC);
 
   return bytesToB64(new Uint8Array(out));
 }
@@ -282,10 +324,13 @@ function formatDecoded(info) {
   });
   const sb = info.sideboard || [];
   if (sb.length) {
+    const sbTotal = sb.reduce((s, t) => s + (t.length > 2 ? t[1] : 1), 0);
     lines.push("");
-    lines.push("乐队卡牌 : " + sb.length + " 张（不计入卡组总数）");
-    sb.forEach(([cd, od]) => {
-      lines.push("  ※ " + displayDbf(cd) + " 〔归属：" + displayDbf(od) + "〕");
+    lines.push("乐队卡牌 : " + sbTotal + " 张（不计入卡组总数）");
+    sb.forEach((t) => {
+      // 新版码是 [卡, 份数, 归属]，旧版码是 [卡, 归属]
+      const cd = t[0], cnt = t.length > 2 ? t[1] : 1, od = t.length > 2 ? t[2] : t[1];
+      lines.push("  ※ " + displayDbf(cd) + " × " + cnt + " 〔归属：" + displayDbf(od) + "〕");
     });
   }
   return lines.join("\n");
@@ -464,8 +509,12 @@ async function api(path, data) {
       const fmt = parseInt(data.format || 1, 10);
       const sideboard = [];
       for (const pair of (data.sideboard || [])) {
-        const c = parseInt(pair[0], 10), o = parseInt(pair[1], 10);
-        if (c > 0 && o > 0) sideboard.push([c, o]);
+        if (!Array.isArray(pair)) continue;
+        // 兼容 [卡, 归属] 与 [卡, 份数, 归属]
+        const c = parseInt(pair[0], 10);
+        const o = parseInt(pair.length > 2 ? pair[2] : pair[1], 10);
+        const cnt = pair.length > 2 ? (parseInt(pair[1], 10) || 1) : 1;
+        if (c > 0 && o > 0) sideboard.push([c, cnt, o]);
       }
       return { text: encodeDeckstring(heroes, cards, fmt, undefined, sideboard.length ? sideboard : null) };
     }
@@ -944,7 +993,8 @@ function zilliaxDisplayCost(card) {
   const band = deckState.bands.get(card.dbfId);
   let sum = 0;
   if (band) band.forEach(bc => {
-    if (zilliaxModuleKind(bc) === "functional" && typeof bc.cost === "number") sum += bc.cost;
+    const c = bandEntryCard(bc);
+    if (zilliaxModuleKind(c) === "functional" && typeof c.cost === "number") sum += c.cost;
   });
   return sum;
 }
@@ -1034,7 +1084,7 @@ function updateBandModeHint() {
       const limitHint = (ownerCfg && ownerCfg.acceptHint) ? "（" + ownerCfg.acceptHint + "）" : "";
       el.innerHTML = "正在为「" + escapeHtml(owner.name) +
         "」挑选" + getBandLabel(ownerDbf) + "（" +
-        (band ? band.size : 0) + "/" + getBandMaxSize(ownerDbf) + "）" + limitHint +
+        (band ? bandTotalCount(band) : 0) + "/" + getBandMaxSize(ownerDbf) + "）" + limitHint +
         "，点左侧卡牌「+」加入";
       el.style.display = "block";
     } else {
@@ -1054,8 +1104,22 @@ function countCardCopies(dbfId) {
   const entry = deckState.cards.get(dbfId);
   if (entry) n += entry.count;
   deckState.bands.forEach(band => {
-    if (band.has(dbfId)) n += 1;      // 每个乐队最多持有 1 张（band 以 dbfId 为 key）
+    if (band.has(dbfId)) n += bandEntryCount(band.get(dbfId));
   });
+  return n;
+}
+
+// 乐队里存的是 { card, count }；早期版本直接存卡对象，这两个取值函数兼容两种形态
+function bandEntryCard(v) {
+  return (v && v.card) ? v.card : v;
+}
+function bandEntryCount(v) {
+  return (v && typeof v.count === "number" && v.count > 0) ? v.count : 1;
+}
+// 乐队已占用的卡位（同一张卡放 2 份算 2 个位置）
+function bandTotalCount(band) {
+  let n = 0;
+  if (band) band.forEach(v => { n += bandEntryCount(v); });
   return n;
 }
 
@@ -1097,14 +1161,15 @@ function addCardToBand(card, ownerDbfId) {
   const maxSize = getBandMaxSize(ownerDbfId);
   let band = deckState.bands.get(ownerDbfId);
   if (!band) { band = new Map(); deckState.bands.set(ownerDbfId, band); }
-  if (band.has(card.dbfId)) { toast("乐队中已有「" + card.name + "」"); return; }
+  // 同一张卡可以放多份（官方允许乐队里出现两张相同的卡），
+  // 数量受上面「主卡组 + 乐队合计份数」与下面「乐队卡位总数」双重限制。
   // 奇利亚斯专属：2 个功能模块 + 1 个外观，分类配额校验
   if (isZilliaxOwner(ownerDbfId)) {
     if (!canBeZilliaxModule(card)) { toast("奇利亚斯只能装配模块或外观（随从）"); return; }
     const kind = zilliaxModuleKind(card);
     let funcCount = 0, cosCount = 0;
     band.forEach(bc => {
-      if (zilliaxModuleKind(bc) === "functional") funcCount++;
+      if (zilliaxModuleKind(bandEntryCard(bc)) === "functional") funcCount++;
       else cosCount++;
     });
     if (kind === "functional" && funcCount >= ZILLIAX_MAX_MODULE) {
@@ -1114,8 +1179,9 @@ function addCardToBand(card, ownerDbfId) {
       toast("外观模块最多 " + ZILLIAX_MAX_COSMETIC + " 个"); return;
     }
   }
-  if (band.size >= maxSize) { toast("乐队最多 " + maxSize + " 张卡"); return; }
-  band.set(card.dbfId, card);
+  if (bandTotalCount(band) >= maxSize) { toast("乐队最多 " + maxSize + " 张卡"); return; }
+  const already = band.get(card.dbfId);
+  band.set(card.dbfId, { card: card, count: already ? bandEntryCount(already) + 1 : 1 });
   updateDeckBadge();          // 乐队卡同样消耗粉尘，加入后必须立即刷新粉尘数
   updateBandModeHint();
   renderDeckCards();
@@ -1127,7 +1193,12 @@ function addCardToBand(card, ownerDbfId) {
 function removeCardFromBand(cardDbfId, ownerDbfId) {
   const band = deckState.bands.get(ownerDbfId);
   if (!band) return;
-  band.delete(cardDbfId);
+  // 数量减 1；减到 0 才真正从乐队里删掉（同一张卡可能放了多份）
+  const cur = band.get(cardDbfId);
+  if (!cur) return;
+  const left = bandEntryCount(cur) - 1;
+  if (left > 0) band.set(cardDbfId, { card: bandEntryCard(cur), count: left });
+  else band.delete(cardDbfId);
   if (band.size === 0) deckState.bands.delete(ownerDbfId);
   updateDeckBadge();          // 移除后同步刷新粉尘数
   updateBandModeHint();
@@ -1144,7 +1215,8 @@ const deckState = {
   cards: new Map(),
   bands: new Map(),      // 乐队（sideboard）：归属dbfId -> Map(卡dbfId -> 卡对象)
   bandTarget: null,      // 乐队挑选模式：正在为哪个归属卡选乐队卡
-  deckName: "HsTool生成"
+  deckName: "HsTool生成",
+  runeSlots: [null, null, null]  // 死亡骑士符文槽（英雄图下方手动声明；全空=跟随卡组实际需求）
 };
 
 // ============================================================
@@ -1157,10 +1229,8 @@ const SETTINGS_KEY = "hstool-settings";
 const DEFAULT_SETTINGS = {
   // —— 功能 ——
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
-  cardHoverZoom:      true,   // 悬停放大卡牌（OFF = 卡牌库网格悬停不再放大）
   cardFlyAnim:        true,   // 加入卡组飞入动画（OFF = 加卡时不做飞行动画）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
-  signatureArt:       false,  // 异画卡图（ON = 有异画的卡改用签名版卡面，需联网）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
   compactMode:        false,  // 紧凑布局
@@ -1229,12 +1299,8 @@ function applySettings() {
   b.classList.toggle("flat-ui",   !settings.md3Style);
   b.classList.toggle("compact-mode", settings.compactMode);
   b.classList.toggle("force-reduce-motion", settings.reduceMotion);
-  // 悬停放大卡牌：卡牌库网格里 hover 时把整张卡放大（见 CSS body.card-hover-zoom）
-  b.classList.toggle("card-hover-zoom", settings.cardHoverZoom);
   // 关闭「水晶颜色」时，所有法力水晶统一回退到基准蓝色（见 CSS .crystal-mono）
   b.classList.toggle("crystal-mono", !settings.crystalColor);
-  // 异画卡图：开启时按需拉索引（异步，不阻塞首屏）
-  if (settings.signatureArt) loadSignatureIndex();
   applyBgVisibility(settings.bgVisibility);
   saveSettings();
 }
@@ -1381,11 +1447,6 @@ document.querySelectorAll('input[data-setting][type="checkbox"]').forEach(inp =>
     updateBgVisDisabled();
     // 关掉「悬停预览」时，若预览正显示着，立刻收起，不用等鼠标移走
     if (!settings.hoverPreview) hideCardHoverPreview();
-    // 「异画卡图」：换图源后要重画一次，已渲染的 <img> 不会自己换
-    if (inp.dataset.setting === "signatureArt") {
-      if (settings.signatureArt) loadSignatureIndex().then(rerenderCardArt);
-      else rerenderCardArt();
-    }
   });
 });
 
@@ -1630,12 +1691,13 @@ function parseDecodeOutput(text) {
   let format = 1;
 
   for (const line of lines) {
-    // 乐队行：※ 名称(DBF xxx) 〔归属：名称(DBF yyy)〕
-    const sbMatch = line.match(/^\s*※\s*(.+?)\s*〔归属：(.+?)〕\s*$/);
+    // 乐队行：※ 名称(DBF xxx) × 份数 〔归属：名称(DBF yyy)〕（份数可省略 = 1）
+    const sbMatch = line.match(/^\s*※\s*(.+?)(?:\s*[×x*]\s*(\d+))?\s*〔归属：(.+?)〕\s*$/);
     if (sbMatch) {
       const cDbf = extractDbfId(sbMatch[1]);
-      const oDbf = extractDbfId(sbMatch[2]);
-      if (cDbf && oDbf) sideboard_pairs.push([cDbf, oDbf]);
+      const oDbf = extractDbfId(sbMatch[3]);
+      const cnt = sbMatch[2] ? parseInt(sbMatch[2], 10) : 1;
+      if (cDbf && oDbf) sideboard_pairs.push([cDbf, cnt > 0 ? cnt : 1, oDbf]);
       continue;
     }
     const heroMatch = line.match(/^英雄\s*[:：]\s*(.+)/);
@@ -1858,16 +1920,19 @@ async function importToDeckBuilder(heroesText, cardsText, format, sideboardPairs
   // 导入乐队（sideboard）：归属卡必须在卡组中，否则跳过；
   // deckstring 里每个复制是一对，先聚合成数量再去重（旧版乐队每卡只存 1 张）
   if (Array.isArray(sideboardPairs)) {
+    // 每项可能是 [卡, 归属]（旧）或 [卡, 份数, 归属]（新版码里带份数）
     const bandCounts = new Map();
     for (const pair of sideboardPairs) {
-      const cardDbf = Array.isArray(pair) ? pair[0] : 0;
-      const ownerDbf = Array.isArray(pair) ? pair[1] : 0;
+      if (!Array.isArray(pair)) continue;
+      const cardDbf = pair.length > 2 ? pair[0] : pair[0];
+      const ownerDbf = pair.length > 2 ? pair[2] : pair[1];
+      const cnt = pair.length > 2 ? (pair[1] > 0 ? pair[1] : 1) : 1;
       if (!cardDbf || !ownerDbf) continue;
       if (!deckState.cards.has(ownerDbf)) continue;
       const key = ownerDbf + ":" + cardDbf;
-      bandCounts.set(key, (bandCounts.get(key) || 0) + 1);
+      bandCounts.set(key, (bandCounts.get(key) || 0) + cnt);
     }
-    for (const [key] of bandCounts) {
+    for (const [key, wantCount] of bandCounts) {
       const ownerDbf = parseInt(key.split(":")[0], 10);
       const cardDbf = parseInt(key.split(":")[1], 10);
       let info = cardCache.get(cardDbf);
@@ -1883,19 +1948,21 @@ async function importToDeckBuilder(heroesText, cardsText, format, sideboardPairs
         const curBand = deckState.bands.get(ownerDbf);
         let funcCount = 0, cosCount = 0;
         if (curBand) curBand.forEach(bc => {
-          if (zilliaxModuleKind(bc) === "functional") funcCount++;
+          if (zilliaxModuleKind(bandEntryCard(bc)) === "functional") funcCount++;
           else cosCount++;
         });
         if (kind === "functional" && funcCount >= ZILLIAX_MAX_MODULE) continue;
         if (kind === "cosmetic" && cosCount >= ZILLIAX_MAX_COSMETIC) continue;
       }
-      // 份数上限跨「主卡组 + 所有乐队」合并：占满名额则跳过（与 UI 侧规则一致，
-      // 传说 1 张、其余 2 张）。放在创建 band map 之前，避免被跳过时留下空 Map。
-      if (countCardCopies(cardDbf) >= maxCopiesOf(info)) continue;
       if (!deckState.bands.has(ownerDbf)) deckState.bands.set(ownerDbf, new Map());
-      // 上限截断：超过该归属卡的乐队上限则跳过（如碧阿崔克丝上限为 1）
-      if (deckState.bands.get(ownerDbf).size >= getBandMaxSize(ownerDbf)) continue;
-      deckState.bands.get(ownerDbf).set(cardDbf, info);  // 旧版结构：直接存卡对象
+      const target = deckState.bands.get(ownerDbf);
+      // 逐份放入：受「主卡组 + 乐队合计份数」与「乐队卡位总数」两个上限约束
+      for (let k = 0; k < wantCount; k++) {
+        if (countCardCopies(cardDbf) >= maxCopiesOf(info)) break;
+        if (bandTotalCount(target) >= getBandMaxSize(ownerDbf)) break;
+        const cur = target.get(cardDbf);
+        target.set(cardDbf, { card: info, count: cur ? bandEntryCount(cur) + 1 : 1 });
+      }
     }
   }
 
@@ -1950,7 +2017,6 @@ function initPreview() {
   buildSortDropdown();
   initDeckDropZone();
   bindDeckHoverPreview();
-  bindGridHoverZoom();
   hsBuildDeckFormatDropdown();
 
   doCardSearch(1);
@@ -2532,10 +2598,10 @@ function hasSignatureArt(cardOrId) {
   return !!id && signatureIndex.has(id);
 }
 
-// 异画图 URL：只在设置开启且该卡有异画时返回，否则空串
+// 异画图 URL：该卡有异画时返回，否则空串（只有卡牌详情会用到）
 // size 与普通卡图一致（256x / 512x），转成代理的 w 参数走已裁好的缩略图
 function signatureImgUrl(cardOrId, size) {
-  if (!settings.signatureArt || !signatureIndex) return "";
+  if (!signatureIndex) return "";
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
   if (!id || !signatureIndex.has(id)) return "";
   const w = size === "512x" ? 512 : (size === "1024x" ? 1024 : 256);
@@ -2552,9 +2618,6 @@ function rerenderCardArt() {
 function cardImgUrl(cardOrId, size) {
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
   if (!id || isNoArtType(cardOrId)) return NO_CARD_IMG;
-  // 异画优先（设置开启 + 该卡有异画）
-  const sig = signatureImgUrl(cardOrId, size);
-  if (sig) return sig;
   return IMG_HOST + "zhCN/" + (size || "256x") + "/" + id + ".png";
 }
 function enCardImgUrl(cardId, size) {
@@ -2787,59 +2850,161 @@ function refreshAllCardBadges() {
 // ============================================================
 // 卡牌详情
 // ============================================================
+// ---- 卡牌详情：异画卡面 / 中英文 切换 ----
+// 注意：这两个只是详情弹窗里的局部状态，不影响卡牌库与组卡器列表的显示，
+// 也不再往设置里塞开关（用户要求去掉「异画卡图」总开关）。
+let detailLang = "zh";     // "zh" | "en"
+let detailSig = false;     // 详情里是否显示异画（签名）卡面
+let detailCard = null;     // 当前详情这张卡
+let detailSeq = 0;         // 请求序号，防止快速连点串台
+
+// 英文卡名/描述：只有真的点了「English」才拉一次（gzip 后约 726 KB）。
+// 拉不到不影响看图 —— 英文卡面本身就把英文描述画在图上了，这里只负责补文字。
+const EN_CARDS_URL = "https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json";
+let enCardMap = null;
+let enCardLoading = null;
+function ensureEnCards() {
+  if (enCardMap) return Promise.resolve(enCardMap);
+  if (enCardLoading) return enCardLoading;
+  enCardLoading = fetch(EN_CARDS_URL, { credentials: "omit" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (list) {
+      const m = new Map();
+      for (let i = 0; i < list.length; i++) { const c = list[i]; if (c && c.id) m.set(c.id, c); }
+      enCardMap = m;
+      return m;
+    })
+    .catch(function (e) { enCardLoading = null; throw e; });
+  return enCardLoading;
+}
+function enCardOf(c) {
+  if (!enCardMap || !c || !c.id) return null;
+  return enCardMap.get(c.id) || null;
+}
+function detailTitle(c) {
+  if (detailLang === "en") { const e = enCardOf(c); if (e && e.name) return e.name; }
+  return c.name;
+}
+function detailImgUrl(c) {
+  const id = (c && c.id) || "";
+  // 英文模式优先：英文卡面本来就带着英文描述，比异画更好用
+  if (detailLang === "en" && id) return enCardImgUrl(id, "512x");
+  if (detailSig) {
+    const u = signatureImgUrl(c, "512x");
+    if (u) return u;
+  }
+  return cardImgUrl(c, "512x");
+}
+function detailToolbarHtml(c) {
+  // 异画按钮先隐藏：异画索引是异步拉的，加载完由 showCardDetail 决定要不要放出来
+  // 英文模式下不显示异画按钮：两者都换图源，同时开着只会让人困惑。
+  // 异画索引可能是异步才就绪，这里先按「当前已知有没有」判断，索引加载完由 showCardDetail 补正。
+  const sigHidden = (detailLang === "en") || !hasSignatureArt(c);
+  const sigBtn = '<button type="button" class="detail-toggle" id="detailSigBtn"' + (sigHidden ? " hidden" : "") + '>' +
+    (detailSig ? "看普通卡面" : "看异画卡面") + "</button>";
+  const langBtn = '<button type="button" class="detail-toggle" id="detailLangBtn">' +
+    (detailLang === "en" ? "中文" : "English") + "</button>";
+  return '<div class="detail-toggles">' + sigBtn + langBtn + "</div>";
+}
+function bindDetailToggles(c) {
+  const sig = document.getElementById("detailSigBtn");
+  if (sig) sig.addEventListener("click", function () {
+    detailSig = !detailSig;
+    renderDetail(c);
+  });
+  const lang = document.getElementById("detailLangBtn");
+  if (lang) lang.addEventListener("click", function () {
+    detailLang = (detailLang === "en") ? "zh" : "en";
+    renderDetail(c);
+    if (detailLang === "en" && !enCardMap) {
+      ensureEnCards().then(function () {
+        if (detailLang === "en" && detailCard && detailCard.dbfId === c.dbfId) renderDetail(c);
+      }).catch(function () {});
+    }
+  });
+}
+
+// 详情内容渲染（切换语言/异画后整块重画，所以单独拆出来）
+function renderDetail(c) {
+  const body = document.getElementById("detailModalBody");
+  if (!body) return;
+  detailCard = c;
+
+  let imgHtml = "";
+  if (c.image_512) {
+    imgHtml = '<div class="detail-img-wrap"><img class="detail-img" src="' + detailImgUrl(c) + '" data-card-id="' + escapeHtml(c.id) + '" alt="' + escapeHtml(detailTitle(c)) + '" onerror="cardImgErr(this, this.dataset.cardId, \'512x\')"></div>';
+  }
+
+  let infoHtml = "";
+  infoHtml += '<div class="detail-name">' + escapeHtml(detailTitle(c)) + '</div>';
+  infoHtml += detailToolbarHtml(c);
+  infoHtml += '<div class="detail-sub">' + escapeHtml(c.class_cn) + ' · ' + escapeHtml(c.type_cn) + ' · ' + escapeHtml(c.rarity_cn)
+            + (isCollectible(c) ? ' · <span style="color:#5c8a5f">可收藏</span>' : ' · <span style="color:#a8977d">不可收藏</span>') + '</div>';
+
+  infoHtml += '<div class="detail-stats">';
+  if (c.cost != null) infoHtml += '<div class="detail-stat"><span class="label">法力</span><span class="value">' + c.cost + '</span></div>';
+  if (c.attack != null) infoHtml += '<div class="detail-stat"><span class="label">攻击</span><span class="value">' + c.attack + '</span></div>';
+  if (c.health != null) infoHtml += '<div class="detail-stat"><span class="label">生命</span><span class="value">' + c.health + '</span></div>';
+  if (c.durability != null) infoHtml += '<div class="detail-stat"><span class="label">耐久</span><span class="value">' + c.durability + '</span></div>';
+  infoHtml += '</div>';
+
+  // 英文模式下优先用英文原文；没拿到就退回中文（不外加关键词浮层，避免中英混排）
+  const enC = (detailLang === "en") ? enCardOf(c) : null;
+  if (enC && enC.text) {
+    infoHtml += '<div class="detail-text">' + escapeHtml(enC.text) + '</div>';
+  } else if (c.text) {
+    infoHtml += '<div class="detail-text">' + renderCardTextHtml(c.text) + '</div>';
+  }
+  if (enC && enC.flavor) {
+    infoHtml += '<div class="detail-flavor">“' + escapeHtml(enC.flavor) + '”</div>';
+  } else if (c.flavor) {
+    infoHtml += '<div class="detail-flavor">「' + escapeHtml(c.flavor) + '」</div>';
+  }
+
+  infoHtml += '<div class="detail-meta">';
+  infoHtml += '<span>DBF: ' + c.dbfId + '</span>';
+  if (c.id) infoHtml += '<span>ID: ' + escapeHtml(c.id) + '</span>';
+  if (c.set_cn) infoHtml += '<span>系列: ' + escapeHtml(c.set_cn) + '</span>';
+  if (c.race_cn || c.race) infoHtml += '<span>种族: ' + escapeHtml(c.race_cn || c.race) + '</span>';
+  if (c.spellSchool_cn || c.spellSchool) infoHtml += '<span>派系: ' + escapeHtml(c.spellSchool_cn || c.spellSchool) + '</span>';
+  if (c.artist) infoHtml += '<span>画师: ' + escapeHtml(c.artist) + '</span>';
+  infoHtml += '</div>';
+
+  infoHtml += '<button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="addCardToDeckByDbfId(' + c.dbfId + ');closeCardDetail();">' + ICON_PLUS + ' 添加到卡组</button>';
+
+  infoHtml += '<div class="detail-attached" id="detailAttached" data-owner="' + c.dbfId + '" style="display:none;margin-top:14px;">' +
+    '<div class="attached-title" id="detailAttachedTitle">附属卡牌</div>' +
+    '<div class="attached-grid" id="detailAttachedGrid"></div>' +
+  '</div>';
+
+  body.innerHTML = '<div>' + imgHtml + '</div><div class="detail-info">' + infoHtml + '</div>';
+  attachTiltEffect();
+  bindDetailToggles(c);
+  renderDetailAttached(c);
+}
+
 async function showCardDetail(dbfId) {
   const modal = document.getElementById("detailModal");
   const body = document.getElementById("detailModalBody");
+  if (!modal || !body) return;
   modal.classList.add("show");
   lockBodyScroll();
+  const seq = ++detailSeq;
+  detailLang = "zh";
+  detailSig = false;
   body.innerHTML = '<div></div><div class="empty-state"><span class="loading-spinner"></span>加载中…</div>';
 
   try {
     const c = await api("/api/cards/detail", { dbfId });
+    if (seq !== detailSeq) return;
     cardCache.set(c.dbfId, c);
-
-    let imgHtml = "";
-    if (c.image_512) {
-      imgHtml = '<div class="detail-img-wrap"><img class="detail-img" src="' + cardImgUrl(c, "512x") + '" data-card-id="' + escapeHtml(c.id) + '" alt="' + escapeHtml(c.name) + '" onerror="cardImgErr(this, this.dataset.cardId, \'512x\')"></div>';
-    }
-
-    let infoHtml = "";
-    infoHtml += '<div class="detail-name">' + escapeHtml(c.name) + '</div>';
-    infoHtml += '<div class="detail-sub">' + escapeHtml(c.class_cn) + ' · ' + escapeHtml(c.type_cn) + ' · ' + escapeHtml(c.rarity_cn)
-              + (isCollectible(c) ? ' · <span style="color:#5c8a5f">可收藏</span>' : ' · <span style="color:#a8977d">不可收藏</span>') + '</div>';
-
-    infoHtml += '<div class="detail-stats">';
-    if (c.cost != null) infoHtml += '<div class="detail-stat"><span class="label">法力</span><span class="value">' + c.cost + '</span></div>';
-    if (c.attack != null) infoHtml += '<div class="detail-stat"><span class="label">攻击</span><span class="value">' + c.attack + '</span></div>';
-    if (c.health != null) infoHtml += '<div class="detail-stat"><span class="label">生命</span><span class="value">' + c.health + '</span></div>';
-    if (c.durability != null) infoHtml += '<div class="detail-stat"><span class="label">耐久</span><span class="value">' + c.durability + '</span></div>';
-    infoHtml += '</div>';
-
-    if (c.text) infoHtml += '<div class="detail-text">' + renderCardTextHtml(c.text) + '</div>';
-    if (c.flavor) infoHtml += '<div class="detail-flavor">「' + escapeHtml(c.flavor) + '」</div>';
-
-    infoHtml += '<div class="detail-meta">';
-    infoHtml += '<span>DBF: ' + c.dbfId + '</span>';
-    if (c.id) infoHtml += '<span>ID: ' + escapeHtml(c.id) + '</span>';
-    if (c.set_cn) infoHtml += '<span>系列: ' + escapeHtml(c.set_cn) + '</span>';
-    if (c.race_cn || c.race) infoHtml += '<span>种族: ' + escapeHtml(c.race_cn || c.race) + '</span>';
-    if (c.spellSchool_cn || c.spellSchool) infoHtml += '<span>派系: ' + escapeHtml(c.spellSchool_cn || c.spellSchool) + '</span>';
-    if (c.artist) infoHtml += '<span>画师: ' + escapeHtml(c.artist) + '</span>';
-    infoHtml += '</div>';
-
-    infoHtml += '<button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="addCardToDeckByDbfId(' + c.dbfId + ');closeCardDetail();">' + ICON_PLUS + ' 添加到卡组</button>';
-
-    // 附属卡容器：有附属卡才填充内容，否则整个块不显示（data-owner 用于异步防串台校验）
-    infoHtml += '<div class="detail-attached" id="detailAttached" data-owner="' + c.dbfId + '" style="display:none;margin-top:14px;">' +
-      '<div class="attached-title" id="detailAttachedTitle">附属卡牌</div>' +
-      '<div class="attached-grid" id="detailAttachedGrid"></div>' +
-    '</div>';
-
-    body.innerHTML = '<div>' + imgHtml + '</div><div class="detail-info">' + infoHtml + '</div>';
-    attachTiltEffect();
-
-    // 异步加载附属卡（奇闻 token 等）：有则展示，没有则保持隐藏
-    renderDetailAttached(c);
+    renderDetail(c);
+    // 异画索引按需加载：加载完再看这张卡有没有异画，有才把按钮放出来
+    loadSignatureIndex().then(function () {
+      const btn = document.getElementById("detailSigBtn");
+      if (!btn || seq !== detailSeq) return;
+      btn.hidden = (detailLang === "en") || !hasSignatureArt(c);
+    }).catch(function () {});
   } catch (e) {
     body.innerHTML = '<div></div><div class="empty-state">加载失败：' + escapeHtml(e.message) + '</div>';
   }
@@ -3049,7 +3214,7 @@ function playDeckFlyAnim(card) {
   if (a.width < 8 || a.height < 8 || b.width < 8) return;
 
   const el = document.createElement("div");
-  el.className = "fly-card";
+  el.className = "fly-card fly-blue";
   el.style.left = a.left + "px";
   el.style.top = a.top + "px";
   el.style.width = a.width + "px";
@@ -3066,10 +3231,11 @@ function playDeckFlyAnim(card) {
   const s = Math.max(0.08, b.height / a.height);
   const midS = 1 - (1 - s) * 0.45;
   const anim = el.animate([
-    { transform: "translate3d(0,0,0) scale(1)", opacity: 1 },
-    { transform: "translate3d(" + (dx * 0.5) + "px," + (dy * 0.5 - 30) + "px,0) scale(" + midS + ")", opacity: 1, offset: 0.5 },
-    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(" + s + ")", opacity: 0.15 }
-  ], { duration: 430, easing: "cubic-bezier(.25,.6,.3,1)", fill: "forwards" });
+    { transform: "translate3d(0,0,0) scale(1)", opacity: 1, filter: "brightness(1)" },
+    { transform: "translate3d(" + (dx * 0.45) + "px," + (dy * 0.45 - 34) + "px,0) scale(" + (midS * 1.06) + ")", opacity: 1, offset: 0.45, filter: "brightness(1.16)" },
+    { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 10) + "px,0) scale(" + (s * 1.02) + ")", opacity: 0.9, offset: 0.82, filter: "brightness(1.06)" },
+    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(" + s + ")", opacity: 0.2, filter: "brightness(1)" }
+  ], { duration: 470, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
   const done = function () {
     el.remove();
     row.classList.add("fly-arrive");
@@ -3109,7 +3275,8 @@ async function addCardToDeck(card) {
   }
 
   // 死亡骑士符文校验（对标官方组卡器：血/冰/邪合计上限 3 点）
-  const runeConflict = runeConflictMessage(card);
+  // 用户在英雄图下方点选过符文槽时，再按「槽位包含」逐类校验
+  const runeConflict = runeConflictMessage(card) || runeSlotConflictMessage(card);
   if (runeConflict) {
     toast(runeConflict);
     return;
@@ -3244,14 +3411,44 @@ function removeCardFromDeck(dbfId) {
     : "已移除：" + entry.card.name);
 }
 
-function clearDeck() {
-  if (deckState.cards.size === 0) return;
-  if (!confirm("确定清空当前卡组？")) return;
+async function clearDeck() {
+  if (deckState.cards.size === 0 && deckState.bands.size === 0) return;
+  // 先把每个可见行的位置和卡图抓成快照：清空后 DOM 就没了，粒子要用这些数据
+  // 约定：ParticleFX.deckExplode 接收 [{ rect: {left,top,width,height}, url }]
+  const rows = Array.prototype.slice.call(document.querySelectorAll("#deckCardsList .deck-row"))
+    .map(function (el) {
+      const r = el.getBoundingClientRect();
+      if (!r || r.width < 8 || r.height < 8) return null;
+      const imgEl = el.querySelector("img");
+      const imgSrc = imgEl ? (imgEl.getAttribute("src") || imgEl.currentSrc || "") : "";
+      let url = imgSrc;
+      if (!url) {
+        const cid = el.getAttribute("data-card-id");
+        const card = cid ? (DB.byId.get(cid) || null) : null;
+        if (card) url = cardImgUrl(card, "256x");
+      }
+      return { rect: { left: r.left, top: r.top, width: r.width, height: r.height }, url: url, el: el };
+    })
+    .filter(Boolean);
+  const total = getDeckTotalForLimit();
+  const ok = await showConfirm({
+    title: "清空卡组",
+    desc: "将移除 <b>" + total + "</b> 张卡（含乐队与奇闻附属卡），此操作不可撤销。",
+    okText: "清空",
+    cancelText: "保留",
+    danger: true
+  });
+  if (!ok) return;
+  // 数据立刻清空（计数、粉尘、曲线马上归零），但列表 DOM 要等粒子放完再重建：
+  // 否则会出现「行已经没了、碎片还在原地飘」的错位感。
   deckState.cards.clear();
   deckState.bands.clear();
   deckState.bandTarget = null;
   updateDeckBadge();
   refreshAllCardBadges();
+  if (typeof ParticleFX !== "undefined" && ParticleFX.supported() && rows.length) {
+    try { await ParticleFX.deckExplode(rows); } catch (e) {}
+  }
   renderDeckCards();
 }
 
@@ -3330,6 +3527,7 @@ function renderDeckHeroCard() {
     card.innerHTML =
       '<img src="' + artUrl + '" data-fallback="' + fallbackUrl + '" alt="' + escapeHtml(deckState.hero.name) + '" ' +
       'onerror="if(!this.dataset.triedFallback){this.dataset.triedFallback=1;this.src=this.dataset.fallback;}else{this.style.display=\'none\';}">' +
+      '<div class="hero-runes" id="heroRunes"></div>' +
       '<div class="deck-name-label">' +
         '<span class="name">' + escapeHtml(deckState.deckName) + '</span>' +
         '<span class="hint">点击更换</span>' +
@@ -3340,11 +3538,13 @@ function renderDeckHeroCard() {
         '<div class="big-icon">' + ICON_SHIELD + '</div>' +
         '<div>点击选择英雄</div>' +
       '</div>' +
+      '<div class="hero-runes" id="heroRunes"></div>' +
       '<div class="deck-name-label">' +
         '<span class="name">' + escapeHtml(deckState.deckName) + '</span>' +
         '<span class="hint">点击选择</span>' +
       '</div>';
   }
+  renderHeroRunes();
 }
 
 // ============================================================
@@ -3455,7 +3655,9 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
 // 归属条：牛头人显示「乐队 x/3」，奇利亚斯显示「定制 x/3」，点击进入/退出挑选模式
 function createBandBar(ownerCard, band) {
   const bar = document.createElement("div");
-  const cur = band ? band.size : 0;
+  // 注意：band.size 是「不同卡的数量」，不是总份数 —— 2 张 A + 1 张 B 会误算成 2/3。
+  let cur = 0;
+  if (band) band.forEach(function (v) { cur += bandEntryCount(v); });
   const max = getBandMaxSize(ownerCard.dbfId);
   let cls = "deck-band-bar";
   if (deckState.bandTarget === ownerCard.dbfId) cls += " active";
@@ -3532,13 +3734,15 @@ function renderDeckCards() {
     // 乐队卡：显示在归属卡下方，按费用降序
     const band = deckState.bands.get(entry.card.dbfId);
     if (band) {
-      Array.from(band.values()).sort((a, b) => {
-        const ca = a.cost === undefined || a.cost === null ? -1 : a.cost;
-        const cb = b.cost === undefined || b.cost === null ? -1 : b.cost;
+      Array.from(band.values()).map(function (v) {
+        return { card: bandEntryCard(v), count: bandEntryCount(v) };
+      }).sort((a, b) => {
+        const ca = a.card.cost === undefined || a.card.cost === null ? -1 : a.card.cost;
+        const cb = b.card.cost === undefined || b.card.cost === null ? -1 : b.card.cost;
         if (ca !== cb) return cb - ca;
-        return a.name.localeCompare(b.name);
-      }).forEach(bandCard => {
-        list.appendChild(createDeckRow({ card: bandCard, count: 1 }, true, entry.card.dbfId));
+        return a.card.name.localeCompare(b.card.name);
+      }).forEach(entry2 => {
+        list.appendChild(createDeckRow({ card: entry2.card, count: entry2.count }, true, entry.card.dbfId));
       });
     }
   });
@@ -3556,8 +3760,7 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
   //   mode 缺省 / "side" —— 组卡器列表：浮层贴在行旁边，由「悬停预览」开关控制；
   //   mode "center"      —— 卡牌库网格：浮层直接盖在被悬停的卡上（视觉上就是这张卡变大了），
   //                         由「悬停放大卡牌」开关控制。
-  const gate = mode === "center" ? settings.cardHoverZoom : settings.hoverPreview;
-  if (!gate) return;
+  if (!settings.hoverPreview) return;
 
   const rect = anchorEl.getBoundingClientRect();
   const pw = 260;
@@ -3659,29 +3862,7 @@ function bindDeckHoverPreview() {
   });
 }
 
-// 卡牌库网格的悬停放大：同样用容器级事件代理。
-// 放大后的卡是复用 globalHoverPreview 浮层（CSS 里 pointer-events:none），
-// 所以它盖住原卡也不会打断 hover，鼠标从浮层上划过仍然是同一张卡的 hover。
-function bindGridHoverZoom() {
-  const grid = document.getElementById("cardGrid");
-  if (!grid || grid.dataset.zoomBound === "1") return;
-  grid.dataset.zoomBound = "1";
-
-  grid.addEventListener("mouseover", (e) => {
-    if (!settings.cardHoverZoom) return;
-    const item = e.target.closest(".card-item[data-hover-card-id]");
-    if (!item || !grid.contains(item)) return;
-    // 同一张卡内移动（移到名字 / 角标上）不重复处理
-    if (item === grid._zoomItem) return;
-    grid._zoomItem = item;
-    showCardHoverPreview(item.dataset.hoverCardId, item, "center");
-  });
-
-  grid.addEventListener("mouseleave", () => {
-    grid._zoomItem = null;
-    hideCardHoverPreview();
-  });
-}
+// （卡牌库网格的「悬停放大卡牌」已按要求移除：不再有浮层盖卡与位移反馈）
 
 // ============================================================
 // 导出按钮：卡组导出到解码页
@@ -3757,7 +3938,7 @@ async function exportDeckToDecode() {
     // 乐队（sideboard）：[[卡牌dbfId, 归属dbfId], ...]
     const sideboardPairs = [];
     deckState.bands.forEach((band, ownerDbf) => {
-      band.forEach((bandCard, cardDbf) => sideboardPairs.push([cardDbf, ownerDbf]));
+      band.forEach((bandCard, cardDbf) => sideboardPairs.push([cardDbf, bandEntryCount(bandCard), ownerDbf]));
     });
     const r = await api("/api/encode", {
       heroes: heroLine,
@@ -5100,25 +5281,119 @@ function runeConflictMessage(card) {
 
 function renderDeckRunes() {
   const box = document.getElementById("deckRunes");
+  if (box) {
+    // 符文改成英雄图下方的图标槽显示，这行文字药丸不再使用
+    box.style.display = "none";
+    box.innerHTML = "";
+  }
+  renderHeroRunes();
+}
+
+// ---------- 符文槽（英雄图下方，可点选） ----------
+const RUNE_IMAGES = {
+  blood: "img/rune-blood.png",
+  frost: "img/rune-frost.png",
+  unholy: "img/rune-unholy.png"
+};
+const RUNE_EMPTY_IMAGE = "img/rune-empty.png";
+const RUNE_CYCLE_ORDER = [null, "blood", "frost", "unholy"];
+
+function isDeathKnightHero() {
+  return !!(deckState.hero && deckState.hero.cardClass === "DEATHKNIGHT");
+}
+
+// 用户手动点选过的槽位（全空 = 没声明过）
+function declaredRuneSlots() {
+  const picked = (deckState.runeSlots || []).slice(0, 3);
+  while (picked.length < 3) picked.push(null);
+  return picked;
+}
+
+// 界面上要显示的 3 个槽：声明过就按声明，没声明就按卡组实际需求自动铺
+function heroRuneSlotValues() {
+  const picked = declaredRuneSlots();
+  if (picked.some(function (x) { return !!x; })) return picked;
+  const need = deckRuneNeed(null).need;
+  const auto = [];
+  RUNE_KINDS.forEach(function (k) {
+    for (let i = 0; i < (need[k[0]] || 0); i++) auto.push(k[0]);
+  });
+  return [auto[0] || null, auto[1] || null, auto[2] || null];
+}
+
+function runeKindCn(key) {
+  const hit = RUNE_KINDS.filter(function (k) { return k[0] === key; })[0];
+  return hit ? hit[1] : "";
+}
+
+function renderHeroRunes() {
+  const box = document.getElementById("heroRunes");
   if (!box) return;
-  const res = deckRuneNeed(null);
-  const hasAny = res.total > 0 || (deckState.hero && deckState.hero.cardClass === "DEATHKNIGHT");
-  if (!hasAny) {
+  if (!isDeathKnightHero()) {
     box.style.display = "none";
     box.innerHTML = "";
     return;
   }
-  box.style.display = "flex";
+  const slots = heroRuneSlotValues();
+  const need = deckRuneNeed(null).need;
+  const total = need.blood + need.frost + need.unholy;
   let html = "";
-  RUNE_KINDS.forEach(function (k) {
-    const key = k[0], cn = k[1], n = res.need[key];
-    html += '<span class="rune-pill rune-' + key + (n ? "" : " rune-zero") + '" title="' + cn + "符文需求：" + n + '">' +
-      cn + " " + n + "</span>";
-  });
-  html += '<span class="deck-rune-total' + (res.total > RUNE_LIMIT ? " over" : "") + '">' +
-    res.total + " / " + RUNE_LIMIT + "</span>";
+  for (let i = 0; i < 3; i++) {
+    const key = slots[i];
+    const cn = key ? runeKindCn(key) : "空";
+    html += '<button type="button" class="hero-rune' + (key ? " filled rune-" + key : " empty") + '"' +
+      ' data-rune-slot="' + i + '"' +
+      ' title="' + (key ? cn + "符文 — 点击切换" : "空符文 — 点击设置血/冰/邪") + '">' +
+      '<img src="' + (key ? RUNE_IMAGES[key] : RUNE_EMPTY_IMAGE) + '" alt="' + cn + '" draggable="false"></button>';
+  }
+  html += '<span class="hero-rune-total' + (total > RUNE_LIMIT ? " over" : "") + '"' +
+    ' title="卡组当前需要 血' + need.blood + " 冰" + need.frost + " 邪" + need.unholy + '">' +
+    total + "/" + RUNE_LIMIT + "</span>";
+  box.style.display = "flex";
   box.innerHTML = html;
 }
+
+// 点一下符文槽：空 → 血 → 冰 → 邪 → 空
+function cycleHeroRune(slotIndex) {
+  if (!isDeathKnightHero()) return;
+  const slots = heroRuneSlotValues();
+  const cur = slots[slotIndex];
+  const idx = RUNE_CYCLE_ORDER.indexOf(cur);
+  slots[slotIndex] = RUNE_CYCLE_ORDER[(idx + 1) % RUNE_CYCLE_ORDER.length];
+  deckState.runeSlots = slots;
+  renderHeroRunes();
+  renderDeckRunes();
+}
+
+// 某张卡的符文需求是否落在声明的槽位里（按类计数：血2 需要两个血槽）
+function runeFitsSlots(card, slots) {
+  const r = cardRunes(card);
+  if (!r) return true;
+  const have = { blood: 0, frost: 0, unholy: 0 };
+  slots.forEach(function (k) { if (k && have[k] !== undefined) have[k]++; });
+  return r.blood <= have.blood && r.frost <= have.frost && r.unholy <= have.unholy;
+}
+
+// 只有用户真的手动声明过槽位才做类型限制；没声明时沿用「总点数 ≤ 3」那条规则
+function runeSlotConflictMessage(card) {
+  if (!isDeathKnightHero()) return "";
+  const slots = declaredRuneSlots();
+  if (!slots.some(function (x) { return !!x; })) return "";
+  if (runeFitsSlots(card, slots)) return "";
+  const r = cardRunes(card);
+  return "符文冲突：当前符文槽为 " + slots.map(function (k) { return k ? runeKindCn(k) : "空"; }).join(" · ") +
+    "，" + card.name + " 需要 " + runeText(r);
+}
+
+// 符文槽点击：在捕获阶段拦掉，别冒泡到 #deckHeroCard 触发「选择英雄」
+document.addEventListener("click", function (e) {
+  const el = e.target;
+  const btn = el && el.closest ? el.closest("#heroRunes .hero-rune") : null;
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  cycleHeroRune(parseInt(btn.getAttribute("data-rune-slot"), 10) || 0);
+}, true);
 
 // 导入/解码得到卡组后统一复查一次（只提示，不删卡：用户可能想自己改）
 function warnDeckRunes() {
@@ -5503,6 +5778,7 @@ function setPosterMode(mode) {
       ? "条形图片：竖排列表，一行一张卡（缩略图 + 费用 + 名称 + 份数），和游戏里的卡组列表一个样子。"
       : "完整图片：标题 + 法力曲线 + 卡面网格，适合直接发出去。";
   }
+  posterPreviewRefresh();
 }
 
 function openPosterModal() {
@@ -5513,6 +5789,7 @@ function openPosterModal() {
   m.classList.add("show");
   // 打开就开始预取卡图：等你选完版式点生成，图已经在内存里了
   startPosterPrefetch();
+  posterPreviewRefresh();
 }
 
 function closePosterModal() {
@@ -5527,6 +5804,9 @@ function closePosterModal() {
     const close = document.getElementById("posterClose");
     const cancel = document.getElementById("posterCancel");
     const seg = document.getElementById("posterSeg");
+    // 这个按钮以前没绑任何事件 —— 点「生成并下载」毫无反应，就是这里漏了
+    const go = document.getElementById("btnPosterGo");
+    if (go) go.addEventListener("click", exportDeckPoster);
     if (close) close.addEventListener("click", closePosterModal);
     if (cancel) cancel.addEventListener("click", closePosterModal);
     m.addEventListener("click", function (e) { if (e.target.id === "posterModal") closePosterModal(); });
@@ -5619,6 +5899,7 @@ async function startPosterPrefetch() {
   } catch (e) { /* 预取失败不影响正式生成 */ }
   posterPrefetching = false;
   posterProgress("卡图已就绪（" + urls.length + " 张），点「生成并下载」直接出图");
+  posterPreviewRefresh();
 }
 
 // 单行文本裁剪（超宽补省略号）
@@ -5633,11 +5914,36 @@ function posterFitText(ctx, text, maxW) {
 // ============================================================
 // 条形图片：竖排列表（缩略图 + 费用 + 名称 + 份数）
 // ============================================================
+// 水晶图只加载一次（同源，不走 /api/card-img）
+class StripCrystalCache {
+  constructor() { this.promise = null; }
+  get() {
+    if (!this.promise) {
+      this.promise = new Promise(function (resolve) {
+        const im = new Image();
+        im.onload = function () { resolve(im); };
+        im.onerror = function () { resolve(null); };
+        im.src = "img/manacrystal.png";
+      });
+    }
+    return this.promise;
+  }
+}
+const stripCrystal = new StripCrystalCache();
+
+// 与 style.css 里 .cost-badge 的 --crystal-filter 一一对应（原图蓝色 = 稀有）
+const CRYSTAL_FILTER = {
+  FREE: "grayscale(1) brightness(1.45)",
+  COMMON: "grayscale(1) brightness(1.45)",
+  RARE: "brightness(1.45) saturate(1.25)",
+  EPIC: "hue-rotate(45deg) brightness(1.45) saturate(1.25)",
+  LEGENDARY: "hue-rotate(180deg) brightness(1.45) saturate(1.25)"
+};
+
 async function renderDeckStripBlob(entries, onProgress) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = 560, PAD = 26;
-  const THUMB_W = 42, THUMB_H = 56;
-  const ROW = 62, GAP = 8;
+  const ROW = 56, GAP = 6;
   const HEAD = 126, FOOT = 54;
   const H = PAD * 2 + HEAD + entries.length * (ROW + GAP) - GAP + FOOT;
 
@@ -5692,56 +5998,91 @@ async function renderDeckStripBlob(entries, onProgress) {
   const urls = entries.map(function (e) { return posterImgUrl(e.card); });
   const pix = new Array(entries.length).fill(null);
 
+  const crystal = await stripCrystal.get();
+  const CRYSTAL_W = 46, CRYSTAL_H = 45;
+
   function drawRow(i) {
     const e = entries[i];
     const x = PAD;
     const y = PAD + HEAD + i * (ROW + GAP);
     const w = W - PAD * 2;
+    const cy = y + ROW / 2;
 
-    ctx.fillStyle = "rgba(255,255,255,0.045)";
+    // 整行卡图铺底：等价 .deck-row .row-bg 的
+    //   object-fit:cover; object-position:center 25%; transform:scale(2.2); transform-origin:center 30%;
+    // 即：先 cover 填满，再放大 2.2 倍，并把卡图 30% 高度那一行对准行的中心。
+    ctx.save();
     roundRect(ctx, x, y, w, ROW, 10);
-    ctx.fill();
+    ctx.clip();
+    ctx.fillStyle = "#241a12";
+    ctx.fillRect(x, y, w, ROW);
+    const img = pix[i];
+    if (img && img.width) {
+      const cover = Math.max(w / img.width, ROW / img.height);
+      const s = cover * 2.2;
+      const dw = img.width * s, dh = img.height * s;
+      const fx = img.width / 2, fy = img.height * 0.30;   // 焦点：水平居中、垂直 30%
+      ctx.drawImage(img,
+        x + w / 2 - fx * s - w * 0.02,   // translateX(-2%)
+        y + ROW / 2 - fy * s,
+        dw, dh);
+    }
+    const veil = ctx.createLinearGradient(x, 0, x + w, 0);
+    veil.addColorStop(0, "rgba(0,0,0,0.72)");
+    veil.addColorStop(0.30, "rgba(0,0,0,0.30)");
+    veil.addColorStop(0.50, "rgba(0,0,0,0.20)");
+    veil.addColorStop(0.70, "rgba(0,0,0,0.30)");
+    veil.addColorStop(1, "rgba(0,0,0,0.72)");
+    ctx.fillStyle = veil;
+    ctx.fillRect(x, y, w, ROW);
+    ctx.restore();
 
+    // 左侧稀有度竖条（列表里靠边框色区分）
+    const ACCENT = { COMMON: "#b9b3ab", FREE: "#b9b3ab", RARE: "#5b8fd6", EPIC: "#a06ad6", LEGENDARY: "#e3a13c" };
     ctx.fillStyle = ACCENT[e.card.rarity] || "#b9b3ab";
     roundRect(ctx, x, y, 4, ROW, 2);
     ctx.fill();
 
-    const tx = x + 12, ty = y + (ROW - THUMB_H) / 2;
-    ctx.save();
-    roundRect(ctx, tx, ty, THUMB_W, THUMB_H, 6);
-    ctx.clip();
-    if (pix[i]) {
-      ctx.drawImage(pix[i], tx, ty, THUMB_W, THUMB_H);
-    } else {
-      ctx.fillStyle = "#2a2130";
-      ctx.fillRect(tx, ty, THUMB_W, THUMB_H);
-    }
-    ctx.restore();
-
+    // 法力水晶：和右侧卡牌列表同一张图、同一套稀有度着色
     const cost = deckDisplayCost(e.card);
-    const cx = tx + THUMB_W + 20;
-    ctx.beginPath();
-    ctx.arc(cx, y + ROW / 2, 13, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(12,9,14,0.85)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(232,194,119,0.8)";
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-    ctx.fillStyle = "#f0dfb8";
-    ctx.font = "700 13px 'Segoe UI', sans-serif";
+    const cx = x + 10 + CRYSTAL_W / 2;
+    if (crystal) {
+      ctx.save();
+      const filter = CRYSTAL_FILTER[e.card.rarity] || "grayscale(1) brightness(1.45)";
+      if (typeof ctx.filter === "string") ctx.filter = filter;
+      ctx.drawImage(crystal, cx - CRYSTAL_W / 2, cy - CRYSTAL_H / 2, CRYSTAL_W, CRYSTAL_H);
+      ctx.restore();
+    } else {
+      // 水晶图没加载出来时退回原来的深色圆
+      ctx.beginPath();
+      ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(12,9,14,0.85)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(232,194,119,0.8)";
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
     ctx.textAlign = "center";
-    ctx.fillText(String(cost), cx, y + ROW / 2 + 5);
+    ctx.font = "700 " + Math.round(CRYSTAL_H * 0.82) + "px 'Belwe', 'Cinzel', 'Times New Roman', serif";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(String(cost), cx, cy + Math.round(CRYSTAL_H * 0.28));
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(String(cost), cx, cy + Math.round(CRYSTAL_H * 0.28));
     ctx.textAlign = "left";
 
+    const nameLeft = cx + CRYSTAL_W / 2 + 10;
     ctx.fillStyle = "#f4e9d6";
     ctx.font = "600 15px 'Segoe UI', 'Microsoft YaHei', sans-serif";
-    const nameMax = w - (cx + 22 - x) - 54;
-    ctx.fillText(posterFitText(ctx, e.card.name, nameMax), cx + 22, y + ROW / 2 + 5);
+    ctx.shadowColor = "rgba(0,0,0,0.85)";
+    ctx.shadowBlur = 4;
+    ctx.fillText(posterFitText(ctx, e.card.name, w - (nameLeft - x) - 54), nameLeft, cy + 5);
+    ctx.shadowBlur = 0;
 
     ctx.textAlign = "right";
-    ctx.fillStyle = "#c5943d";
+    ctx.fillStyle = "#e8c277";
     ctx.font = "700 14px 'Segoe UI', sans-serif";
-    ctx.fillText("×" + e.count, x + w - 14, y + ROW / 2 + 5);
+    ctx.fillText("×" + e.count, x + w - 14, cy + 5);
     ctx.textAlign = "left";
   }
 
@@ -5765,3 +6106,626 @@ async function renderDeckStripBlob(entries, onProgress) {
     }, "image/png");
   });
 }
+
+// ============================================================
+// 粒子引擎（参数模型照 tsparticles 的 emitter/particle 那套：
+// 位置、速度、重力、阻尼、旋转、寿命、淡出、贴图切片）
+// 用途：清空卡组时把每张卡的卡面切成碎片炸开
+// ============================================================
+const ParticleFX = (function () {
+  let canvas = null;
+  let ctx = null;
+  let raf = 0;
+  let dpr = 1;
+  let lastT = 0;
+
+  let rows = [];       // { rect, off, octx, cells: [] }
+  let dust = [];       // 已化灰的格子
+
+  let snapT0 = 0;
+  let resolveDone = null;   // 动画结束通知（clearDeck 等它收尾再重建列表）
+  let snapDur = 700;
+  let snapFront = 0;
+  const FRONT_BAND = 0.07;
+
+  let ema = 16.7;
+  let dustStep = 1;
+
+  function supported() {
+    return !document.body.classList.contains("force-reduce-motion")
+      && !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  function ensureCanvas() {
+    if (canvas) return;
+    canvas = document.createElement("canvas");
+    canvas.className = "fx-layer";
+    document.body.appendChild(canvas);
+    ctx = canvas.getContext("2d");
+    resize();
+    window.addEventListener("resize", resize);
+  }
+
+  function resize() {
+    if (!canvas) return;
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------------- 噪声：照搬 jiuyang5354/bilibili-margin intro/engine.ts ----------------
+  function hash2(x, y) {
+    const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  function vnoise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const ux = xf * xf * (3 - 2 * xf);
+    const uy = yf * yf * (3 - 2 * yf);
+    const q00 = hash2(xi, yi), q10 = hash2(xi + 1, yi);
+    const q01 = hash2(xi, yi + 1), q11 = hash2(xi + 1, yi + 1);
+    return (q00 * (1 - ux) + q10 * ux) * (1 - uy) + (q01 * (1 - ux) + q11 * ux) * uy;
+  }
+  function fbm2(x, y) {
+    let v = 0, amp = 0.5, px = x, py = y;
+    for (let i = 0; i < 3; i++) {
+      v += amp * vnoise2(px, py);
+      const nx = 1.6 * px - 1.2 * py;
+      const ny = 1.2 * px + 1.6 * py;
+      px = nx; py = ny; amp *= 0.5;
+    }
+    return v / 0.875;
+  }
+
+  // ---------------- 离屏行画布：先把卡面画好，之后只做「擦除」 ----------------
+  // 精确复刻 CSS：.row-bg { object-fit: cover; object-position: center 25%;
+  //                      transform: scale(2.2) translateX(-2%); transform-origin: center 30% }
+  // 之前只按「cover + 2.2」算窗口，漏了 translateX 还要被 scale 放大 2.2 倍、以及
+  // transform-origin 不是中心 —— 这就是「消散时不是原矩形 / 图整体往右移」的根源。
+  const ZOOM = 2.2;
+  const SHIFT_X = 0.02;   // translateX(-2%)
+  const ORIGIN_Y = 0.30;  // transform-origin: center 30%
+  function visibleWindow(bw, bh, w, h) {
+    const s0 = Math.max(w / bw, h / bh);          // object-fit: cover
+    const visW = winsafe(w / s0, bw), visH = winsafe(h / s0, bh);
+    const ox = (bw - visW) * 0.5;                 // object-position: center
+    const oy = (bh - visH) * 0.25;                // object-position: 25%
+    const ex = 0.5 * (1 - 1 / ZOOM) + SHIFT_X;    // 元素框内的窗口左边（比例）
+    const ey = ORIGIN_Y * (1 - 1 / ZOOM);         // 元素框内的窗口上边（比例）
+    const sw = visW / ZOOM, sh = visH / ZOOM;
+    return {
+      sx: Math.max(0, Math.min(bw - sw, ox + ex * visW)),
+      sy: Math.max(0, Math.min(bh - sh, oy + ey * visH)),
+      sw: sw, sh: sh
+    };
+  }
+  function winsafe(v, max) { return Math.max(1, Math.min(v, max)); }
+
+  const CELL = 6;
+  // 从右到左整列消融：擦掉的是「矩形格子」而不是圆洞，所以没化到的部分保持完整原样，
+  // 不会变成一个个圆点；推进顺序只由 x 决定（噪声只做小幅抖动），边界是一条锯齿线。
+  const GRID_MAX_COLS = 150;
+
+  function makeRow(rect, bmp, tint, idx, el) {
+    // rect 是「视觉」坐标（祖先有 scale(0.88)/scale(0.92)），离屏必须按 CSS 尺寸画、
+    // 贴回主画布时再按视觉 rect 缩放；否则卡面的裁切窗口和 DOM 对不上，
+    // 表现就是「消散时不是原矩形」「图整体往右移」。
+    const vw = Math.max(1, rect.width), vh = Math.max(1, rect.height);
+    const cssW = el && el.offsetWidth ? el.offsetWidth : vw;
+    const cssH = el && el.offsetHeight ? el.offsetHeight : vh;
+    const kx = vw / cssW, ky = vh / cssH;
+
+    const off = document.createElement("canvas");
+    off.width = Math.max(1, Math.round(cssW * dpr));
+    off.height = Math.max(1, Math.round(cssH * dpr));
+    const octx = off.getContext("2d");
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (bmp) {
+      const win = visibleWindow(bmp.width, bmp.height, cssW, cssH);
+      octx.drawImage(bmp, win.sx, win.sy, win.sw, win.sh, 0, 0, cssW, cssH);
+    } else {
+      octx.fillStyle = tint;
+      octx.fillRect(0, 0, cssW, cssH);
+    }
+
+    // 这一行在「整个列表」里的垂直位置（0 = 列表顶部，1 = 列表底部）。
+    // 对角线消散要靠它：列表底部的行先化，顶部最后化。
+    const tyRow = (snapBox && snapBox.height > 1)
+      ? Math.min(1, Math.max(0, (rect.top + rect.height - snapBox.top) / snapBox.height))
+      : 0.5;
+
+    const cols = Math.max(8, Math.min(GRID_MAX_COLS, Math.round(cssW / CELL)));
+    const rowsN = Math.max(2, Math.round(cssH / CELL));
+    const cw = cssW / cols, ch = cssH / rowsN;
+    const cells = [];
+
+    // 取色：为了灰的颜色跟卡面对得上，仍然采样一次（不参与绘制）
+    let px = null;
+    if (bmp) {
+      const sc = document.createElement("canvas");
+      sc.width = cols; sc.height = rowsN;
+      const sg = sc.getContext("2d", { willReadFrequently: true });
+      const win2 = visibleWindow(bmp.width, bmp.height, cssW, cssH);
+      sg.drawImage(bmp, win2.sx, win2.sy, win2.sw, win2.sh, 0, 0, cols, rowsN);
+      try { px = sg.getImageData(0, 0, cols, rowsN).data; } catch (e) { px = null; }
+    }
+
+    for (let gy = 0; gy < rowsN; gy++) {
+      for (let gx = 0; gx < cols; gx++) {
+        let color = tint;
+        let invisible = false;
+        if (px) {
+          const i = (gy * cols + gx) * 4;
+          if (px[i + 3] < 20) invisible = true;
+          else color = "rgb(" + px[i] + "," + px[i + 1] + "," + px[i + 2] + ")";
+        }
+        // 右下一 → 左上：右下角 n≈0（最先化），左上角 n≈1（最后化）。
+        // x 方向权重 0.6、y 方向 0.4 —— 斜带往左推进得快一点，扫过时是斜的。
+        // 噪声只给 ±0.05 的抖动，同一斜带上的格子几乎同步，不会在完整区域里留下孤立的洞。
+        const jitter = (fbm2(gx * 0.23 + idx * 3.3, gy * 0.35) - 0.5) * 0.10;
+        const base = 0.6 * (cols - 1 - gx) / cols + 0.4 * (1 - tyRow);
+        const n = Math.min(1, Math.max(0, base * 0.96 + jitter));
+        const life = 380 + Math.random() * 260;
+        cells.push({
+          gx: gx, gy: gy, lx: gx * cw, ly: gy * ch, w: cw, h: ch,
+          x: rect.left + (gx + 0.5) * cw * kx,
+          y: rect.top + (gy + 0.5) * ch * ky,
+          hw: (cw * kx) / 2, hh: (ch * ky) / 2,
+          color: color, invisible: invisible, n: n,
+          r: Math.min(cw * kx, ch * ky) * 0.55,
+          vx: 0, vy: 0, grav: 0, drag: 0.995, scale0: 1, scale: 1, alpha: 1,
+          life: life, ttl: life, fade: life * 0.8
+        });
+      }
+    }
+    return { rect: rect, off: off, octx: octx, cells: cells, kx: kx, ky: ky, ty: tyRow };
+  }
+
+  // 每帧给几千个灰画 arc 太贵（fps 62→46）。改成预渲染的圆形贴图，绘制时只做 drawImage。
+  const dustSprites = new Map();
+  function dustSprite(color) {
+    const key = color.indexOf("#") === 0
+      ? color
+      : color.replace(/\d+/g, (m) => String(Math.round(+m / 8) * 8));
+    let c = dustSprites.get(key);
+    if (c) return c;
+    c = document.createElement("canvas");
+    c.width = 32; c.height = 32;
+    const g = c.getContext("2d");
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(16, 16, 15.2, 0, 6.2832);
+    g.fill();
+    dustSprites.set(key, c);
+    return c;
+  }
+
+  function spawnDust(p) {
+    dust.push({
+      x: p.x, y: p.y, w: p.w, h: p.h, r: p.r * 1.18, color: p.color,
+      vx: 2.8 + Math.random() * 4.6,      // 风从左往右吹
+      vy: -1.5 + Math.random() * 2.0,
+      grav: 0.05, drag: 0.995,
+      life: p.ttl, ttl: p.ttl, fade: p.fade,
+      scale0: 1, scale: 1, alpha: 1
+    });
+  }
+
+  function frame(t) {
+    if (!lastT) lastT = t;
+    const dt = Math.min(50, t - lastT);
+    lastT = t;
+    const k = dt / 16.667;
+    ema = ema * 0.9 + dt * 0.1;
+    if (ema > 26 && dustStep === 1) dustStep = 2;
+
+    if (snapT0) {
+      const pr = (t - snapT0) / snapDur;
+      snapFront = Math.min(1, Math.max(0, pr));
+      if (pr > 1.2) { snapT0 = 0; snapFront = 1; }
+    }
+
+    // 0.5) DOM 叠加层（名字 / 法力水晶 / 遮罩）跟着同一条前沿被裁掉。
+    //      前沿从右往左推进，所以裁掉右侧 (snapFront*100)%，左侧保留。
+    // 对角线前沿：行内仍然是一条竖切线，但每行的切线位置不同 ——
+    // 叠起来就是从右下扫到左上的斜带。列表底部的行（ty→1）先化完，顶部最后。
+    // 0.96 是格子排序里的收尾系数，这里必须同除，否则文字会比卡面早/晚一点被裁。
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row.el) continue;
+      const tyRow = (typeof row.ty === "number") ? row.ty : 0.5;
+      const cut = Math.min(1, Math.max(0, (snapFront / 0.96 - 0.4 * (1 - tyRow)) / 0.6));
+      // 按格子宽度量化（每行约 40 格 ≈ 2.5%）：文字/水晶一格一格被切掉，与卡面边界对齐
+      const cutPct = Math.round(cut * 40) / 40 * 100;
+      if (row.clipPct === cutPct) continue;
+      row.clipPct = cutPct;
+      row.el.style.clipPath = "inset(0 " + cutPct + "% 0 0)";
+    }
+
+    // 1) 把「已经烧到」的格子从离屏上擦掉，并生成灰
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      const cells = row.cells;
+      let holes = null;
+      for (let i = cells.length - 1; i >= 0; i--) {
+        const p = cells[i];
+        if (p.n > snapFront) continue;
+        // 擦的是矩形格子：整列整列地化，没化到的部分保持原样（不会变成圆点）。
+        // 一帧内所有格子累进同一个 Path2D，只 fill 一次。
+        if (!holes) holes = new Path2D();
+        holes.rect(p.lx - 0.5, p.ly - 0.5, p.w + 1, p.h + 1);
+        cells[i] = cells[cells.length - 1];
+        cells.pop();
+        if (p.invisible) continue;
+        // 灰只从一小部分格子里起飞（约 1/5），"粒子更少"就靠这个
+        if (Math.random() > (dustStep > 1 ? 0.1 : 0.2)) continue;
+        spawnDust(p);
+      }
+      if (holes) {
+        row.octx.globalCompositeOperation = "destination-out";
+        row.octx.fill(holes);
+        row.octx.globalCompositeOperation = "source-over";
+      }
+    }
+
+    // 2) 整帧重绘：清屏 → 铺一层侧栏底色（消散期间 .deck-sidebar 是透明的，
+    //    不铺的话行与行之间那几像素缝隙会漏出页面背景）→ 逐行贴图
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    if (snapBg && snapBox) {
+      ctx.fillStyle = snapBg;
+      // 只铺「行与行之间的缝」和左右内边距，不整块铺：
+      // 还没被画进 canvas 的那些行，卡面还是靠 DOM 里的 img 撑着；
+      // 整块铺会把它们盖成一片空白（看起来就是清空瞬间列表先白了一下）。
+      const bx = snapBox.left, by = snapBox.top, bw = snapBox.width, bh = snapBox.height;
+      const rs = (snapRects && snapRects.length) ? snapRects.slice().sort(function (a, b) { return a.top - b.top; }) : null;
+      if (!rs) {
+        ctx.fillRect(bx, by, bw, bh);
+      } else {
+        let y = by;
+        for (let i = 0; i < rs.length; i++) {
+          const r = rs[i];
+          if (r.top > y) ctx.fillRect(bx, y, bw, r.top - y);
+          const rt = Math.max(y, r.top), rb = r.top + r.height;
+          // 左右各 3px 内边距（行比列表窄）
+          if (r.left > bx) ctx.fillRect(bx, rt, r.left - bx, rb - rt);
+          const rowRight = r.left + r.width, boxRight = bx + bw;
+          if (boxRight > rowRight) ctx.fillRect(rowRight, rt, boxRight - rowRight, rb - rt);
+          y = Math.max(y, rb);
+        }
+        if (by + bh > y) ctx.fillRect(bx, y, bw, by + bh - y);
+      }
+    }
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row.cells.length) continue;
+      ctx.drawImage(row.off, 0, 0, row.off.width, row.off.height,
+        row.rect.left, row.rect.top, row.rect.width, row.rect.height);
+    }
+
+    // 3) 金光：只画当前边界带
+    let goldHot = null, goldWarm = null;
+    for (let r = 0; r < rows.length; r++) {
+      const cells = rows[r].cells;
+      for (let i = 0; i < cells.length; i++) {
+        const p = cells[i];
+        const near = p.n - snapFront;
+        if (near >= FRONT_BAND) continue;
+        const strength = 1 - near / FRONT_BAND;
+        const grow = 0.6 + strength * 1.6;
+        if (strength > 0.55) {
+          if (!goldHot) goldHot = new Path2D();
+          goldHot.rect(p.x - p.hw - grow, p.y - p.hh - grow, p.hw * 2 + grow * 2, p.hh * 2 + grow * 2);
+        } else {
+          if (!goldWarm) goldWarm = new Path2D();
+          goldWarm.rect(p.x - p.hw - grow, p.y - p.hh - grow, p.hw * 2 + grow * 2, p.hh * 2 + grow * 2);
+        }
+      }
+    }
+    if (goldWarm) { ctx.fillStyle = "rgba(255,198,110,0.72)"; ctx.fill(goldWarm); }
+    if (goldHot) { ctx.fillStyle = "rgba(255,247,222,0.95)"; ctx.fill(goldHot); }
+
+    // 4) 灰：向右飞
+    const keepDust = [];
+    for (let i = 0; i < dust.length; i++) {
+      const p = dust[i];
+      p.life -= dt;
+      if (p.life <= 0) continue;
+      p.vy += p.grav * k;
+      const d = Math.pow(p.drag, k);
+      p.vx *= d; p.vy *= d;
+      p.x += p.vx * k;
+      p.y += p.vy * k;
+      p.scale = p.scale0 * (0.28 + 0.72 * (p.life / p.ttl));
+      p.alpha = Math.min(1, p.life / p.fade);
+      ctx.globalAlpha = p.alpha;
+      const rr = Math.max(0.8, p.r * p.scale);
+      ctx.drawImage(dustSprite(p.color), p.x - rr, p.y - rr, rr * 2, rr * 2);
+      keepDust.push(p);
+    }
+    ctx.globalAlpha = 1;
+    dust = keepDust;
+
+    // 清掉已空的行走
+    for (let r = rows.length - 1; r >= 0; r--) {
+      if (rows[r].cells.length) continue;
+      const gone = rows[r];
+      rows.splice(r, 1);
+      // 整行化完：把裁剪复位（DOM 还会被随后的 renderDeckCards 重建/移除）
+      if (gone.el) {
+        gone.el.style.clipPath = "";
+        gone.el.style.visibility = "hidden";
+      }
+    }
+    // 纸面全部化完（约 1.15s）就先通知清空流程重建列表；剩最后一缕灰让它自己飞完，
+    // 不必等到 2s+ 才让侧栏收起来。
+    if (!rows.length && resolveDone) { const d = resolveDone; resolveDone = null; d(); }
+
+    if (rows.length || dust.length) {
+      raf = requestAnimationFrame(frame);
+    } else {
+      raf = 0; lastT = 0; snapT0 = 0; ema = 16.7; dustStep = 1;
+      if (ctx) ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      if (canvas) {
+        window.removeEventListener("resize", resize);
+        canvas.remove();
+        canvas = null; ctx = null;
+      }
+      rows = []; dust = [];
+      document.body.classList.remove("fx-snapping");
+      snapBg = null; snapBox = null; snapRects = null;
+      const done = resolveDone; resolveDone = null; if (done) done();
+    }
+  }
+
+  function addRows(list) {
+    if (!list.length) return;
+    // 画布只接管「卡面」：卡面已经画在 canvas 上了，所以只把 img 藏掉。
+    // 名字、法力水晶、暗部遮罩继续由 DOM 出像素（消散期间它们浮在 canvas 之上），
+    // 每帧被 clip-path 跟着同一条前沿裁掉 —— 这样才是「整张卡」一起消散。
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it || !it.el) continue;
+      const im = it.el.querySelector("img.row-bg");
+      if (im) im.style.visibility = "hidden";
+      it.el.classList.add("snap-clipped");
+      it.el.style.clipPath = "inset(0 0% 0 0)";
+      it.clipPct = 0;
+    }
+    ensureCanvas();
+    for (let i = 0; i < list.length; i++) rows.push(list[i]);
+    if (!raf) { lastT = 0; raf = requestAnimationFrame(frame); }
+  }
+
+  let snapBg = null;    // 消散期间由 canvas 代铺的侧栏底色
+  let snapBox = null;   // 列表区域（视觉坐标）
+  let snapRects = null; // 参与消散的所有行的矩形（含还没画到 canvas 上的）
+
+  const FALLBACK = ["#c5943d", "#a06ad6", "#5b8fd6", "#b9b3ab"];
+
+  function deckExplode(items) {
+    if (!supported() || !items || !items.length) return Promise.resolve();
+    // 只消化「真正看得见」的行：滚动视图外的行在 DOM 里被 .deck-cards-list 的
+    // overflow 裁掉了，但 canvas 是全屏的，把它们也抓进来就会在列表外面凭空冒出卡图。
+    const view = document.getElementById("deckCardsList");
+    const vr = view ? view.getBoundingClientRect() : null;
+    const ready = items.filter(function (it) {
+      if (!it || !it.rect) return false;
+      if (!vr) return true;
+      return it.rect.top >= vr.top - 1 && it.rect.top + it.rect.height <= vr.bottom + 1;
+    });
+    if (!ready.length) return Promise.resolve();
+    // 记下侧栏底色与列表区域：消散期间侧栏要变透明并浮到 canvas 之上，
+    // 底色改由 canvas 自己铺，缝隙才不会漏出页面背景图。
+    const side = document.querySelector(".deck-sidebar");
+    snapBg = side ? (getComputedStyle(side).backgroundColor || null) : null;
+    snapBox = vr ? { left: vr.left, top: vr.top, width: vr.width, height: vr.height } : null;
+    snapRects = ready.map(function (it) { return it.rect; });
+
+    let started = false;
+    let remaining = ready.length;
+    let firstSettleAt = 0;
+    const built = new Array(ready.length);
+    const donePromise = new Promise(function (res) { resolveDone = res; });
+    // 兜底：卡图一个都没回来时，1.5s 后照样起播（用兜底色块），不能一直干等
+    const kick = setTimeout(function () { start(); }, 1500);
+
+    function start() {
+      if (started) return;
+      started = true;
+      clearTimeout(kick);
+      // 让侧栏整块浮到 canvas 之上（名字/水晶/遮罩才能在消散时被裁掉）
+      document.body.classList.add("fx-snapping");
+      snapDur = 700;
+      snapFront = 0;
+      snapT0 = performance.now();
+    }
+
+    function settle(idx) {
+      remaining--;
+      if (built[idx]) addRows([built[idx]]);
+      if (!firstSettleAt) firstSettleAt = performance.now();
+      // 关键：所有行共用同一个时钟。谁先回来就先画上去（DOM 那层还撑着，看不出来），
+      // 但要等「全部就绪」或「首行就绪后再等 550ms」才开播 —— 否则每行各自起播，
+      // 看到的效果是一行一行依次化掉，而不是一条统一从右下扫向左上的对角线。
+      if (remaining <= 0) {
+        clearTimeout(kick);
+        start();
+      } else if (!started && performance.now() - firstSettleAt > 550) {
+        clearTimeout(kick);
+        start();
+      }
+    }
+
+    for (let i = 0; i < ready.length; i++) {
+      (function (it, idx) {
+        const tint = FALLBACK[idx % FALLBACK.length];
+        let settled = false;
+        const finish = function (bmp) {
+          if (settled) return;            // 幂等：超时兜底 + 真图后到，只认第一次
+          settled = true;
+          built[idx] = makeRow(it.rect, bmp || null, tint, idx, it.el || null);
+          built[idx].el = it.el || null;
+          settle(idx);
+        };
+        if (!it.url) { finish(null); return; }
+        posterPixLoad(artProxyUrl(it.url)).then(finish).catch(function () { finish(null); });
+        setTimeout(function () { finish(null); }, 1300);
+      })(ready[i], i);
+    }
+    return donePromise;
+  }
+
+  return { deckExplode: deckExplode, supported: supported };
+})();
+
+// ============================================================
+// 通用确认弹窗（替代原生 confirm，Promise 化）
+// ============================================================
+let _confirmResolve = null;
+
+function _confirmFinish(val) {
+  const m = document.getElementById("confirmModal");
+  if (m) m.classList.remove("show");
+  const r = _confirmResolve;
+  _confirmResolve = null;
+  if (r) r(val);
+}
+
+function showConfirm(opts) {
+  const o = opts || {};
+  const m = document.getElementById("confirmModal");
+  if (!m) return Promise.resolve(window.confirm(o.desc || "确定？"));
+  const titleEl = document.getElementById("confirmTitle");
+  const descEl = document.getElementById("confirmDesc");
+  const okEl = document.getElementById("confirmOk");
+  const cancelEl = document.getElementById("confirmCancel");
+  if (titleEl) titleEl.textContent = o.title || "确认操作";
+  if (descEl) descEl.innerHTML = o.desc || "";
+  if (okEl) {
+    okEl.textContent = o.okText || "确定";
+    okEl.classList.toggle("btn-danger", !!o.danger);
+    okEl.classList.toggle("btn-primary", !o.danger);
+  }
+  if (cancelEl) cancelEl.textContent = o.cancelText || "取消";
+  if (_confirmResolve) _confirmFinish(false);
+  return new Promise(function (resolve) {
+    _confirmResolve = resolve;
+    m.classList.add("show");
+    if (okEl) okEl.focus();
+  });
+}
+
+(function () {
+  const bind = function () {
+    const m = document.getElementById("confirmModal");
+    if (!m) return;
+    const ok = document.getElementById("confirmOk");
+    const cancel = document.getElementById("confirmCancel");
+    const close = document.getElementById("confirmClose");
+    if (ok) ok.addEventListener("click", function () { _confirmFinish(true); });
+    if (cancel) cancel.addEventListener("click", function () { _confirmFinish(false); });
+    if (close) close.addEventListener("click", function () { _confirmFinish(false); });
+    m.addEventListener("click", function (e) { if (e.target === m) _confirmFinish(false); });
+    document.addEventListener("keydown", function (e) {
+      if (!m.classList.contains("show")) return;
+      if (e.key === "Escape") { e.preventDefault(); _confirmFinish(false); }
+      else if (e.key === "Enter") { e.preventDefault(); _confirmFinish(true); }
+    });
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
+  else bind();
+})();
+
+// ============================================================
+// 导出弹窗里的预览图（复用渲染器，等比缩到 300px 内）
+// ============================================================
+let posterPreviewBusy = false;
+let posterPreviewAgain = false;
+
+async function posterPreviewRefresh() {
+  const cv = document.getElementById("posterPreview");
+  const hint = document.getElementById("posterPreviewHint");
+  if (!cv || !hint) return;
+  const entries = posterEntries();
+  if (!entries.length) {
+    cv.style.display = "none";
+    hint.style.display = "block";
+    hint.textContent = "卡组是空的，先加几张卡";
+    return;
+  }
+  if (posterPreviewBusy) { posterPreviewAgain = true; return; }
+  posterPreviewBusy = true;
+  hint.style.display = "block";
+  hint.textContent = "预览生成中…";
+  try {
+    const blob = await renderDeckPosterBlob(entries, posterMode, null);
+    const bmp = await createImageBitmap(blob);
+    const maxW = 340, maxH = 380;
+    const k = Math.min(maxW / bmp.width, maxH / bmp.height, 1);
+    const w = Math.max(1, Math.round(bmp.width * k));
+    const h = Math.max(1, Math.round(bmp.height * k));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    cv.style.width = w + "px";
+    cv.style.height = h + "px";
+    cv.style.display = "block";
+    const c2 = cv.getContext("2d");
+    c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c2.clearRect(0, 0, w, h);
+    c2.drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) bmp.close();
+    hint.style.display = "none";
+  } catch (e) {
+    hint.style.display = "block";
+    hint.textContent = "预览失败：" + (e && e.message ? e.message : "未知错误");
+  }
+  posterPreviewBusy = false;
+  if (posterPreviewAgain) {
+    posterPreviewAgain = false;
+    posterPreviewRefresh();
+  }
+}
+
+// ---------------- 清空粒子的卡图预取 ----------------
+// art.hearthstonejson.com 不返回 Access-Control-Allow-Origin，fetch 它必然失败，
+// 拿不到像素就没法把卡面切成灰。所以统一走我们自己的 /api/card-img 同源代理。
+function artProxyUrl(u) {
+  if (!u) return u;
+  const m = /^https?:\/\/art\.hearthstonejson\.com\/v1\/(.+)$/.exec(u);
+  if (m) return "/api/card-img?u=" + encodeURIComponent(m[1]);
+  return u;
+}
+
+let __deckArtTimer = 0;
+function prefetchDeckArt() {
+  if (typeof ParticleFX === "undefined" || !ParticleFX.supported()) return;
+  if (!window.fetch) return;
+  clearTimeout(__deckArtTimer);
+  __deckArtTimer = setTimeout(function () {
+    const imgs = document.querySelectorAll("#deckCardsList .deck-row img");
+    for (let i = 0; i < imgs.length; i++) {
+      const raw = imgs[i].getAttribute("src");
+      if (!raw) continue;
+      const u = artProxyUrl(raw);
+      if (posterPixCache.has(u)) continue;
+      // 失败也不影响使用：那时粒子退回色块
+      posterPixLoad(u).catch(function () {});
+    }
+  }, 180);
+}
+
+(function () {
+  const orig = renderDeckCards;
+  if (typeof orig !== "function") return;
+  renderDeckCards = function () {
+    const r = orig.apply(this, arguments);
+    prefetchDeckArt();
+    return r;
+  };
+})();

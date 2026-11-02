@@ -393,17 +393,6 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <span class="settings-row-title">悬停放大卡牌</span>
-            <span class="settings-row-desc">在卡牌库网格里悬停时把卡牌放大突出显示</span>
-          </div>
-          <label class="md3-switch">
-            <input type="checkbox" data-setting="cardHoverZoom">
-            <span class="md3-switch-track"></span>
-          </label>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-label">
             <span class="settings-row-title">加入卡组动画</span>
             <span class="settings-row-desc">加卡时卡面从卡牌库飞入卡组列表（与官方组卡器一致）</span>
           </div>
@@ -420,17 +409,6 @@
           </div>
           <label class="md3-switch">
             <input type="checkbox" data-setting="crystalColor">
-            <span class="md3-switch-track"></span>
-          </label>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-label">
-            <span class="settings-row-title">异画卡图</span>
-            <span class="settings-row-desc">有异画（签名）版的卡改用签名卡面，来源 Hearthstone Wiki，需联网</span>
-          </div>
-          <label class="md3-switch">
-            <input type="checkbox" data-setting="signatureArt">
             <span class="md3-switch-track"></span>
           </label>
         </div>
@@ -658,11 +636,32 @@
         <button class="poster-seg-btn active" data-pmode="full" role="tab" aria-selected="true">完整图片</button>
         <button class="poster-seg-btn" data-pmode="strip" role="tab" aria-selected="false">条形图片</button>
       </div>
+      <div class="poster-preview-wrap">
+        <canvas id="posterPreview" class="poster-preview" style="display:none"></canvas>
+        <div class="poster-preview-hint" id="posterPreviewHint">预览生成中…</div>
+      </div>
       <p class="poster-desc" id="posterDesc"></p>
       <div class="poster-progress" id="posterProgress"></div>
       <div class="poster-actions">
         <button class="btn btn-ghost" id="posterCancel">取消</button>
         <button class="btn btn-primary" id="btnPosterGo">生成并下载</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 通用确认弹窗（替代原生 confirm，样式与设置/导出弹窗一致） -->
+<div class="settings-modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="settings-modal-content confirm-modal-content">
+    <div class="settings-modal-header">
+      <h3 id="confirmTitle">确认操作</h3>
+      <button class="close-btn" id="confirmClose" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-modal-body">
+      <p class="confirm-desc" id="confirmDesc"></p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" id="confirmCancel">取消</button>
+        <button class="btn btn-primary" id="confirmOk">确定</button>
       </div>
     </div>
   </div>

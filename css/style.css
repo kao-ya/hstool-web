@@ -1155,14 +1155,6 @@
      auto，裁剪发生在 padding box 边界，放大后的卡一定被切角（实测 1.1 倍就要 16px
      内边距）；想放大到 260px 宽（约 1.5 倍）需要 43px 横向内边距，不现实。
      所以这里只保留轻量抬升反馈。 */
-  body.card-hover-zoom .card-item {
-    transition: box-shadow var(--motion-short), border-color var(--motion-short),
-                background var(--motion-short), transform var(--motion-short);
-  }
-  body.card-hover-zoom .card-item:hover {
-    transform: translateY(-2px);
-    z-index: 5;
-  }
   .card-item img {
     width: 100%;
     display: block;
@@ -1388,7 +1380,11 @@
     flex: 1;
     overflow-y: auto;
     padding: 4px 3px;
-    min-height: 100px;
+    /* 关键：flex 子项默认 min-height:auto（= 内容高度），不写 0 就压不下去；
+       卡组一多它会顶破侧栏，看起来就是「列表限高失效」。 */
+    min-height: 0;
+    /* 把列表的绘制关在自己的层里：外面按钮的重绘不会牵连整块列表重新栅格化 */
+    contain: paint;
     /* 可滚动但不显示滚动条：滚动能力保留，视觉上不出现竖条 */
     scrollbar-width: none;          /* Firefox / 新版 Chromium */
     -ms-overflow-style: none;       /* 旧版 Edge */
@@ -1429,6 +1425,8 @@
     cursor: default;
     /* 只过渡高亮层，不对整行做 filter（filter 会触发整块重绘，在列表里移动鼠标时像在抖） */
     transition: box-shadow 0.15s;
+    /* 每行自成一个绘制单元：悬停只重绘这一行，不牵连整条列表 */
+    contain: paint;
   }
   .deck-row:hover {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 0 0 999px rgba(255, 255, 255, 0.045);
@@ -1929,9 +1927,14 @@
     color: var(--on-primary);
     border: none;
     cursor: pointer;
-    transition: filter 0.15s, box-shadow 0.15s;
+    /* 不能用 filter 做悬停提亮：侧栏是 scale(0.88) 的变换层，层内元素加 filter 会
+       让 Chrome 把整个缩放子树重新栅格化 —— 逐帧重采样会导致相邻列表看着在抖。 */
+    transition: background-color 0.15s, box-shadow 0.15s;
   }
-  .deck-sidebar-footer .btn-row .btn-import-mini:hover { filter: brightness(1.1); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+  .deck-sidebar-footer .btn-row .btn-import-mini:hover {
+    background: color-mix(in srgb, var(--primary) 86%, #ffffff);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
   .deck-sidebar-footer .btn-row .btn-export-big {
     flex: 1;
     justify-content: center;
@@ -2903,3 +2906,232 @@ body.no-border .kw-tip { border-color: transparent; }
     100% { background-color: transparent; }
   }
   body.force-reduce-motion .fly-card { display: none; }
+
+  /* ============================================================
+     粒子特效画布（清空卡组的散开效果）
+     ============================================================ */
+  .fx-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 10070;
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     加卡飞行：官方那种「卡面变蓝发光」
+     ============================================================ */
+  .fly-card {
+    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
+                0 0 28px rgba(74, 163, 255, 0.8),
+                0 14px 30px rgba(0, 0, 0, 0.45);
+    isolation: isolate;
+  }
+  .fly-card img {
+    filter: saturate(1.2) brightness(1.06) contrast(1.02);
+  }
+  .fly-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+      linear-gradient(160deg, rgba(86, 170, 255, 0.5) 0%, rgba(38, 118, 226, 0.22) 46%, rgba(86, 170, 255, 0.04) 100%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+  }
+
+  /* 落地时整行泛蓝（覆盖此前的主色版本） */
+  .deck-row.fly-arrive {
+    animation: deckRowArriveBlue 0.5s ease-out;
+  }
+  @keyframes deckRowArriveBlue {
+    0% {
+      background-color: rgba(74, 163, 255, 0.34);
+      box-shadow: inset 0 0 0 1.5px rgba(96, 176, 255, 0.9), 0 0 18px rgba(74, 163, 255, 0.55);
+    }
+    55% {
+      background-color: rgba(74, 163, 255, 0.16);
+      box-shadow: inset 0 0 0 1px rgba(96, 176, 255, 0.5), 0 0 10px rgba(74, 163, 255, 0.28);
+    }
+    100% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+  }
+
+  /* ============================================================
+     导出弹窗里的预览图
+     ============================================================ */
+  .poster-preview-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    margin: 2px 0 10px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background:
+      repeating-conic-gradient(rgba(255, 255, 255, 0.035) 0% 25%, transparent 0% 50%) 50% / 16px 16px,
+      rgba(0, 0, 0, 0.22);
+    position: relative;
+    overflow: hidden;
+  }
+  .poster-preview {
+    display: block;
+    max-width: 100%;
+    border-radius: 8px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  }
+  .poster-preview-hint {
+    position: absolute;
+    font-size: 12.5px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  /* ============================================================
+     通用确认弹窗
+     ============================================================ */
+  .confirm-modal-content { max-width: 400px; }
+  .confirm-desc {
+    margin: 0 0 6px;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .confirm-desc b { color: var(--primary); font-weight: 700; }
+  .confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 16px;
+  }
+  .confirm-actions .btn { min-width: 84px; justify-content: center; }
+  /* 只给确认弹窗的危险按钮上填充色：以前写成裸 .btn-danger，
+     把工具栏里的「清空卡组」也一起染红了（那个应该是描边样式）。 */
+  .confirm-actions .btn-danger {
+    background: color-mix(in srgb, #d94b3d 26%, transparent);
+    color: #ff8b7e;
+    border: 1px solid color-mix(in srgb, #d94b3d 60%, transparent);
+  }
+  .confirm-actions .btn-danger:hover {
+    background: color-mix(in srgb, #d94b3d 38%, transparent);
+    color: #ffb0a6;
+  }
+
+  /* ============================================================
+     死亡骑士符文槽（英雄插画下方，点一下切换 空→血→冰→邪）
+     ============================================================ */
+  .deck-hero-card .hero-runes {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 27px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    z-index: 2;
+  }
+  .deck-hero-card .hero-rune {
+    width: 31px; height: 31px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    -webkit-appearance: none;
+    appearance: none;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+    transition: transform 0.12s var(--ease-standard), filter 0.12s var(--ease-standard);
+  }
+  .deck-hero-card .hero-rune img {
+    position: static;
+    inset: auto;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 1;
+    pointer-events: none;
+  }
+  .deck-hero-card .hero-rune.empty img { opacity: 0.4; }
+  .deck-hero-card .hero-rune:hover { transform: translateY(-2px) scale(1.08); }
+  .deck-hero-card .hero-rune:hover img { opacity: 1; }
+  .deck-hero-card .hero-rune.filled.rune-blood { filter: drop-shadow(0 0 7px rgba(214,64,52,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+  .deck-hero-card .hero-rune.filled.rune-frost { filter: drop-shadow(0 0 7px rgba(88,164,232,0.65)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+  .deck-hero-card .hero-rune.filled.rune-unholy { filter: drop-shadow(0 0 7px rgba(120,196,96,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+  .deck-hero-card .hero-rune-total {
+    margin-left: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.4px;
+    color: var(--gold-light);
+    padding: 3px 5px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.6);
+    border: 1px solid rgba(212,175,110,0.3);
+  }
+  .deck-hero-card .hero-rune-total.over {
+    color: #ff9a8f;
+    border-color: color-mix(in srgb, #d94b3d 60%, transparent);
+  }
+
+  /* ============================================================
+     清空卡组：行原地「化掉」（粒子从它的像素上起飞，见 ParticleFX）
+     ============================================================ */
+  /* 行的化掉交给 canvas（ParticleFX），这里不再用 CSS 动画 */
+
+  /* ============================================================
+     清空卡组：消散期间让右侧栏整块浮到 canvas 之上
+     canvas(.fx-layer) 的 z-index 是 10070；侧栏平时在它下面，
+     所以 canvas 上的卡面会盖住行内的名字/法力水晶。
+     消散时把 .preview-page（有 transform，本身就是层叠上下文）抬到 10071，
+     行内的 DOM 叠加层就能压在卡面之上，被同一套 clip-path 跟着前沿裁掉 ——
+     整张卡（卡面 + 文字 + 水晶 + 暗角）一起消散。
+     侧栏自身底色必须同时去掉，否则会挡住 canvas 上的卡面；
+     底色改由 canvas 每帧先铺一层（缝隙处才不会漏出页面背景图）。
+     ============================================================ */
+  body.fx-snapping .preview-page {
+    position: relative;
+    z-index: 10071;
+  }
+  body.fx-snapping .deck-sidebar {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  body.fx-snapping #deckCardsList .deck-row {
+    background: transparent;
+  }
+  body.fx-snapping .deck-row.snap-clipped {
+    will-change: clip-path;
+  }
+
+  /* ============================================================
+     卡牌详情里的切换按钮（异画 / 中英文）
+     ============================================================ */
+  .detail-toggles {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 2px 0 10px;
+  }
+  .detail-toggle {
+    appearance: none;
+    cursor: pointer;
+    padding: 5px 13px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: var(--text);
+    background: transparent;
+    border: 1.5px solid color-mix(in srgb, var(--primary) 45%, transparent);
+    transition: background-color var(--motion-short), border-color var(--motion-short);
+  }
+  .detail-toggle:hover {
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+    border-color: var(--primary);
+  }
+  .detail-toggle[hidden] { display: none; }
