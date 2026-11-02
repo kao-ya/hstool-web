@@ -120,7 +120,7 @@
           </div>
           <div class="deck-runes" id="deckRunes" style="display:none;"></div>
           <div class="btn-row">
-            <button class="btn btn-ghost btn-clear" id="btnDeckPoster" onclick="exportDeckPoster()" title="生成卡组长图（分享用）"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg></button>
+            <button class="btn btn-outline btn-clear" id="btnDeckPoster" onclick="openPosterModal()" title="生成卡组长图（分享用）"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg></button>
             <button class="btn btn-danger btn-clear" onclick="clearDeck()" title="清空"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg></button>
             <button class="btn btn-import-mini" id="btnImportDeck" onclick="importDeckFromClipboard()" title="从剪贴板导入卡组代码"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> 导入</button>
             <button class="btn btn-success btn-export-big" onclick="exportDeckToDecode()"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg> 导出</button>
@@ -404,6 +404,17 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
+            <span class="settings-row-title">加入卡组动画</span>
+            <span class="settings-row-desc">加卡时卡面从卡牌库飞入卡组列表（与官方组卡器一致）</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="cardFlyAnim">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
             <span class="settings-row-title">水晶颜色</span>
             <span class="settings-row-desc">按稀有度给法力水晶着色；关闭后统一为蓝色</span>
           </div>
@@ -633,6 +644,29 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<!-- 卡组图片导出弹窗：先选版式，再生成 -->
+<div class="settings-modal" id="posterModal" role="dialog" aria-modal="true" aria-labelledby="posterTitle">
+  <div class="settings-modal-content poster-modal-content">
+    <div class="settings-modal-header">
+      <h3 id="posterTitle">生成卡组图片</h3>
+      <button class="close-btn" id="posterClose" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-modal-body poster-modal-body">
+      <div class="settings-group-title">版式</div>
+      <div class="poster-seg" id="posterSeg" role="tablist" aria-label="图片版式">
+        <button class="poster-seg-btn active" data-pmode="full" role="tab" aria-selected="true">完整图片</button>
+        <button class="poster-seg-btn" data-pmode="strip" role="tab" aria-selected="false">条形图片</button>
+      </div>
+      <p class="poster-desc" id="posterDesc"></p>
+      <div class="poster-progress" id="posterProgress"></div>
+      <div class="poster-actions">
+        <button class="btn btn-ghost" id="posterCancel">取消</button>
+        <button class="btn btn-primary" id="btnPosterGo">生成并下载</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script src="js/app.js"></script>
 </body>

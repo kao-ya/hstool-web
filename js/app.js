@@ -1119,6 +1119,7 @@ function addCardToBand(card, ownerDbfId) {
   updateDeckBadge();          // 乐队卡同样消耗粉尘，加入后必须立即刷新粉尘数
   updateBandModeHint();
   renderDeckCards();
+  playDeckFlyAnim(card);
   toast("已加入乐队：" + card.name);
 }
 
@@ -1157,6 +1158,7 @@ const DEFAULT_SETTINGS = {
   // —— 功能 ——
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
   cardHoverZoom:      true,   // 悬停放大卡牌（OFF = 卡牌库网格悬停不再放大）
+  cardFlyAnim:        true,   // 加入卡组飞入动画（OFF = 加卡时不做飞行动画）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
   signatureArt:       false,  // 异画卡图（ON = 有异画的卡改用签名版卡面，需联网）
   // —— 布局 ——
@@ -3019,6 +3021,64 @@ document.getElementById("detailModal").addEventListener("click", (e) => {
 // ============================================================
 // 组卡器
 // ============================================================
+// ============================================================
+// 加入卡组的飞入动画（对标官方组卡器：卡面从卡牌库飞到卡组列表）
+// 设置里可关：设置 → 功能 → 加入卡组动画
+// ============================================================
+// 记住「这次加卡是从哪张卡发起的」：pointerdown 时抓最近的卡片节点，
+// 网格「+」按钮、卡牌详情里的加卡按钮都能拿到起点。
+let _flySourceEl = null;
+document.addEventListener("pointerdown", function (e) {
+  const t = e.target;
+  _flySourceEl = (t && t.closest) ? t.closest(".card-item, .card-detail-card, .deck-row") : null;
+}, true);
+
+function playDeckFlyAnim(card) {
+  if (!card || !settings.cardFlyAnim) return;
+  if (document.body.classList.contains("force-reduce-motion")) return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const src = _flySourceEl;
+  if (!src || !src.getBoundingClientRect || !document.body.contains(src)) return;
+  let row = null;
+  try {
+    row = document.querySelector('.deck-row[data-card-id="' + String(card.id).replace(/["\\]/g, "") + '"]');
+  } catch (e) { row = null; }
+  if (!row) return;
+  const a = src.getBoundingClientRect();
+  const b = row.getBoundingClientRect();
+  if (a.width < 8 || a.height < 8 || b.width < 8) return;
+
+  const el = document.createElement("div");
+  el.className = "fly-card";
+  el.style.left = a.left + "px";
+  el.style.top = a.top + "px";
+  el.style.width = a.width + "px";
+  el.style.height = a.height + "px";
+  const im = document.createElement("img");
+  im.alt = "";
+  im.src = cardImgUrl(card, "256x");
+  el.appendChild(im);
+  document.body.appendChild(el);
+
+  // 从起点中心飞到目标行中心，等比缩到行高；中途略微上抛，像被「扔」过去
+  const dx = (b.left + b.width / 2) - (a.left + a.width / 2);
+  const dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+  const s = Math.max(0.08, b.height / a.height);
+  const midS = 1 - (1 - s) * 0.45;
+  const anim = el.animate([
+    { transform: "translate3d(0,0,0) scale(1)", opacity: 1 },
+    { transform: "translate3d(" + (dx * 0.5) + "px," + (dy * 0.5 - 30) + "px,0) scale(" + midS + ")", opacity: 1, offset: 0.5 },
+    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(" + s + ")", opacity: 0.15 }
+  ], { duration: 430, easing: "cubic-bezier(.25,.6,.3,1)", fill: "forwards" });
+  const done = function () {
+    el.remove();
+    row.classList.add("fly-arrive");
+    setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
+  };
+  if (anim && anim.onfinish !== undefined) anim.onfinish = done;
+  else setTimeout(done, 430);
+}
+
 async function addCardToDeck(card) {
   if (!card) return;
   // 乐队挑选模式：加入归属卡的乐队而不是卡组（所有加卡入口统一在此分流）
@@ -3088,6 +3148,7 @@ async function addCardToDeck(card) {
   updateDeckBadge();
   refreshAllCardBadges();
   renderDeckCards();
+  playDeckFlyAnim(card);
 
   let msg = "已添加：" + card.name + " ×" + (deckCount + 1);
   if (attachedAdded > 0) msg += "（附带 " + attachedAdded + " 张附属卡）";
@@ -5144,7 +5205,9 @@ function wrapText(ctx, text, maxWidth) {
 }
 
 // 生成卡组长图，返回 PNG Blob
-async function renderDeckPosterBlob(entries) {
+async function renderDeckPosterBlob(entries, mode, onProgress) {
+  // 条形图片（列表式）走另一套绘制
+  if (mode === "strip") return renderDeckStripBlob(entries, onProgress);
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = 780;
   const PAD = 34;
@@ -5249,7 +5312,9 @@ async function renderDeckPosterBlob(entries) {
   // 卡牌网格
   const gridTop = PAD + HEAD + CURVE;
   const urls = entries.map(function (e) { return posterImgUrl(e.card); });
-  const pix = await loadPixBatch(urls, 6);
+  const pix = await loadPosterPix(urls, function (i, img, done, total) {
+    if (onProgress) onProgress(done, total);
+  });
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -5367,24 +5432,37 @@ async function renderDeckPosterBlob(entries) {
 async function exportDeckPoster() {
   const entries = posterEntries();
   if (!entries.length) {
+    posterProgress("卡组是空的，先加几张卡");
     toast("卡组是空的，先加几张卡");
     return;
   }
-  toast("正在生成长图…");
+  const goBtn = document.getElementById("btnPosterGo");
+  if (goBtn) goBtn.disabled = true;
+  const mode = posterMode;
   try {
-    const blob = await renderDeckPosterBlob(entries);
+    posterProgress(mode === "strip" ? "正在生成条形图片…" : "正在生成长图…");
+    const blob = await renderDeckPosterBlob(entries, mode, function (done, total) {
+      posterProgress("正在取图 " + done + " / " + total + "…");
+    });
     const safe = String(deckState.deckName || "HsTool卡组").replace(/[\\/:*?"<>|]/g, "_");
+    const suffix = mode === "strip" ? "-条形" : "";
+    const name = safe + suffix + ".png";
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = safe + ".png";
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
-    toast("长图已生成：" + safe + ".png");
+    posterProgress("已生成：" + name);
+    toast("图片已生成：" + name);
+    closePosterModal();
   } catch (err) {
-    toast("长图生成失败：" + (err && err.message ? err.message : "未知错误"));
+    posterProgress("");
+    toast("图片生成失败：" + (err && err.message ? err.message : "未知错误"));
+  } finally {
+    if (goBtn) goBtn.disabled = false;
   }
 }
 
@@ -5394,3 +5472,296 @@ async function exportDeckPoster() {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tryInit);
   else tryInit();
 })();
+
+// ============================================================
+// 卡组图片导出：弹窗控制 + 取图加速（fetch + createImageBitmap + 内存缓存）
+// ============================================================
+let posterMode = "full";              // full = 完整图片 / strip = 条形图片
+const posterPixCache = new Map();     // url -> Promise<ImageBitmap|HTMLImageElement|null>
+let posterPrefetching = false;
+const POSTER_PIX_CONC = 12;           // 并发 12：冷启动时比 6 路快约一倍
+
+function posterProgress(text) {
+  const el = document.getElementById("posterProgress");
+  if (el) el.textContent = text || "";
+}
+
+function setPosterMode(mode) {
+  posterMode = (mode === "strip") ? "strip" : "full";
+  const seg = document.getElementById("posterSeg");
+  if (seg) {
+    const btns = seg.querySelectorAll(".poster-seg-btn");
+    for (let i = 0; i < btns.length; i++) {
+      const on = btns[i].dataset.pmode === posterMode;
+      btns[i].classList.toggle("active", on);
+      btns[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+  }
+  const desc = document.getElementById("posterDesc");
+  if (desc) {
+    desc.textContent = posterMode === "strip"
+      ? "条形图片：竖排列表，一行一张卡（缩略图 + 费用 + 名称 + 份数），和游戏里的卡组列表一个样子。"
+      : "完整图片：标题 + 法力曲线 + 卡面网格，适合直接发出去。";
+  }
+}
+
+function openPosterModal() {
+  const m = document.getElementById("posterModal");
+  if (!m) return;
+  setPosterMode(posterMode);
+  posterProgress("");
+  m.classList.add("show");
+  // 打开就开始预取卡图：等你选完版式点生成，图已经在内存里了
+  startPosterPrefetch();
+}
+
+function closePosterModal() {
+  const m = document.getElementById("posterModal");
+  if (m) m.classList.remove("show");
+}
+
+(function () {
+  const bind = function () {
+    const m = document.getElementById("posterModal");
+    if (!m) return;
+    const close = document.getElementById("posterClose");
+    const cancel = document.getElementById("posterCancel");
+    const seg = document.getElementById("posterSeg");
+    if (close) close.addEventListener("click", closePosterModal);
+    if (cancel) cancel.addEventListener("click", closePosterModal);
+    m.addEventListener("click", function (e) { if (e.target.id === "posterModal") closePosterModal(); });
+    if (seg) {
+      seg.addEventListener("click", function (e) {
+        const b = e.target && e.target.closest ? e.target.closest(".poster-seg-btn") : null;
+        if (b) setPosterMode(b.dataset.pmode);
+      });
+    }
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
+  else bind();
+})();
+
+// 单张卡图：走同源代理（art.hearthstonejson.com 不返回 ACAO，canvas 用不了直连图）
+function posterPixLoad(url) {
+  const hit = posterPixCache.get(url);
+  if (hit) return hit;
+  const p = (async function () {
+    try {
+      const r = await fetch(url, { credentials: "omit" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const blob = await r.blob();
+      if (typeof createImageBitmap === "function") {
+        try { return await createImageBitmap(blob); } catch (e) { /* 退回 <img> */ }
+      }
+      return await new Promise(function (resolve) {
+        const img = new Image();
+        const u = URL.createObjectURL(blob);
+        img.onload = function () { URL.revokeObjectURL(u); resolve(img); };
+        img.onerror = function () { URL.revokeObjectURL(u); resolve(null); };
+        img.src = u;
+      });
+    } catch (e) {
+      return null;
+    }
+  })();
+  posterPixCache.set(url, p);
+  return p;
+}
+
+// 批量取图：onEach 按「完成顺序」回调，便于把进度显示出来
+async function loadPosterPix(urls, onEach) {
+  const total = urls.length;
+  const out = new Array(total).fill(null);
+  let next = 0;
+  async function worker() {
+    while (next < total) {
+      const i = next++;
+      const img = await posterPixLoad(urls[i]);
+      out[i] = img;
+      if (onEach) onEach(i, img);
+    }
+  }
+  const lanes = Math.max(1, Math.min(POSTER_PIX_CONC, total));
+  const pool = [];
+  for (let k = 0; k < lanes; k++) pool.push(worker());
+  await Promise.all(pool);
+  // 补漏：边缘冷启动偶发失败，重试一次，避免长图出现空卡位
+  const missing = [];
+  for (let i = 0; i < total; i++) if (!out[i]) missing.push(i);
+  if (missing.length) {
+    await Promise.all(missing.map(async function (i) {
+      posterPixCache.delete(urls[i]);
+      const img = await posterPixLoad(urls[i]);
+      out[i] = img;
+      if (img && onEach) onEach(i, img);
+    }));
+  }
+  return out;
+}
+
+async function startPosterPrefetch() {
+  if (posterPrefetching) return;
+  const entries = posterEntries();
+  if (!entries.length) { posterProgress("卡组是空的，先加几张卡"); return; }
+  const urls = entries.map(function (e) { return posterImgUrl(e.card); });
+  let ready = 0;
+  for (let i = 0; i < urls.length; i++) if (posterPixCache.has(urls[i])) ready++;
+  if (ready === urls.length) {
+    posterProgress("卡图已就绪（" + urls.length + " 张），点「生成并下载」直接出图");
+    return;
+  }
+  posterPrefetching = true;
+  posterProgress("正在预取卡图 " + ready + " / " + urls.length + "…");
+  try {
+    await loadPosterPix(urls, function (i, img) {
+      posterProgress("正在预取卡图 " + Math.min(urls.length, ready + 1) + " / " + urls.length + "…");
+    });
+  } catch (e) { /* 预取失败不影响正式生成 */ }
+  posterPrefetching = false;
+  posterProgress("卡图已就绪（" + urls.length + " 张），点「生成并下载」直接出图");
+}
+
+// 单行文本裁剪（超宽补省略号）
+function posterFitText(ctx, text, maxW) {
+  const s = String(text === undefined || text === null ? "" : text);
+  if (ctx.measureText(s).width <= maxW) return s;
+  let out = s;
+  while (out.length > 1 && ctx.measureText(out + "…").width > maxW) out = out.slice(0, -1);
+  return out + "…";
+}
+
+// ============================================================
+// 条形图片：竖排列表（缩略图 + 费用 + 名称 + 份数）
+// ============================================================
+async function renderDeckStripBlob(entries, onProgress) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = 560, PAD = 26;
+  const THUMB_W = 42, THUMB_H = 56;
+  const ROW = 62, GAP = 8;
+  const HEAD = 126, FOOT = 54;
+  const H = PAD * 2 + HEAD + entries.length * (ROW + GAP) - GAP + FOOT;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#1b1520");
+  bg.addColorStop(0.5, "#171218");
+  bg.addColorStop(1, "#120e14");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.5, 0, 0, W * 0.5, 0, W * 0.85);
+  glow.addColorStop(0, "rgba(197,148,61,0.20)");
+  glow.addColorStop(1, "rgba(197,148,61,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, HEAD + 40);
+
+  // 头部
+  const heroName = deckState.hero ? (deckState.hero.name || "") : "未选择英雄";
+  const heroClass = deckState.hero ? (DB.maps.class[deckState.hero.cardClass] || "") : "";
+  const fmtText = deckState.format === 1 ? "狂野" : "标准";
+  let total = 0, dust = 0, goldDust = 0;
+  entries.forEach(function (e) {
+    total += e.count;
+    dust += (DUST_COST[e.card.rarity] || 0) * e.count;
+    goldDust += (DUST_COST_GOLD[e.card.rarity] || 0) * e.count;
+  });
+  ctx.fillStyle = "#f4e9d6";
+  ctx.font = "700 26px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText(deckState.deckName || "HsTool 卡组", PAD, PAD + 30);
+  ctx.font = "13.5px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillStyle = "#c2ae90";
+  const runeRes = typeof deckRuneNeed === "function" ? deckRuneNeed(null) : { total: 0 };
+  const sub = [heroClass ? heroName + " · " + heroClass : heroName, fmtText, total + " 张"]
+    .concat(runeRes.total > 0 ? ["符文 " + runeText(runeRes.need)] : [])
+    .join("   ·   ");
+  ctx.fillText(sub, PAD, PAD + 56);
+  ctx.fillStyle = "#c5943d";
+  ctx.font = "600 13.5px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("奥术之尘 " + dust.toLocaleString() + " / 金 " + goldDust.toLocaleString(), PAD, PAD + 80);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#8d7c66";
+  ctx.font = "600 13px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("HsTool · hstool.pages.dev", W - PAD, PAD + 26);
+  ctx.textAlign = "left";
+
+  const ACCENT = { COMMON: "#b9b3ab", FREE: "#b9b3ab", RARE: "#5b8fd6", EPIC: "#a06ad6", LEGENDARY: "#e3a13c" };
+  const urls = entries.map(function (e) { return posterImgUrl(e.card); });
+  const pix = new Array(entries.length).fill(null);
+
+  function drawRow(i) {
+    const e = entries[i];
+    const x = PAD;
+    const y = PAD + HEAD + i * (ROW + GAP);
+    const w = W - PAD * 2;
+
+    ctx.fillStyle = "rgba(255,255,255,0.045)";
+    roundRect(ctx, x, y, w, ROW, 10);
+    ctx.fill();
+
+    ctx.fillStyle = ACCENT[e.card.rarity] || "#b9b3ab";
+    roundRect(ctx, x, y, 4, ROW, 2);
+    ctx.fill();
+
+    const tx = x + 12, ty = y + (ROW - THUMB_H) / 2;
+    ctx.save();
+    roundRect(ctx, tx, ty, THUMB_W, THUMB_H, 6);
+    ctx.clip();
+    if (pix[i]) {
+      ctx.drawImage(pix[i], tx, ty, THUMB_W, THUMB_H);
+    } else {
+      ctx.fillStyle = "#2a2130";
+      ctx.fillRect(tx, ty, THUMB_W, THUMB_H);
+    }
+    ctx.restore();
+
+    const cost = deckDisplayCost(e.card);
+    const cx = tx + THUMB_W + 20;
+    ctx.beginPath();
+    ctx.arc(cx, y + ROW / 2, 13, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(12,9,14,0.85)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(232,194,119,0.8)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.fillStyle = "#f0dfb8";
+    ctx.font = "700 13px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(String(cost), cx, y + ROW / 2 + 5);
+    ctx.textAlign = "left";
+
+    ctx.fillStyle = "#f4e9d6";
+    ctx.font = "600 15px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+    const nameMax = w - (cx + 22 - x) - 54;
+    ctx.fillText(posterFitText(ctx, e.card.name, nameMax), cx + 22, y + ROW / 2 + 5);
+
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#c5943d";
+    ctx.font = "700 14px 'Segoe UI', sans-serif";
+    ctx.fillText("×" + e.count, x + w - 14, y + ROW / 2 + 5);
+    ctx.textAlign = "left";
+  }
+
+  for (let i = 0; i < entries.length; i++) drawRow(i);
+  await loadPosterPix(urls, function (i, img, done, totalN) {
+    pix[i] = img;
+    drawRow(i);
+    if (onProgress) onProgress(done === undefined ? i + 1 : done, totalN === undefined ? entries.length : totalN);
+  });
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#8d7c66";
+  ctx.font = "600 12.5px 'Segoe UI', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("HsTool · hstool.pages.dev", W / 2, H - PAD + 4);
+  ctx.textAlign = "left";
+
+  return await new Promise(function (resolve, reject) {
+    canvas.toBlob(function (b) {
+      if (b) resolve(b);
+      else reject(new Error("canvas 导出失败"));
+    }, "image/png");
+  });
+}

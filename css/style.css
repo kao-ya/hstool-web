@@ -2818,3 +2818,88 @@ body.no-border .kw-tip { border-color: transparent; }
   .sort-dir-btn .sort-dir-icon svg { transition: transform var(--motion-short); }
   .sort-dir-btn[data-dir="desc"] .sort-dir-icon svg { transform: rotate(180deg); }
   .sort-dir-btn:hover { color: var(--primary); }
+
+  /* ============================================================
+     卡组分享按钮：描边样式（与「清空」按钮同一档视觉，只是主色而非错误色）
+     ============================================================ */
+  .btn-outline {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  .btn-outline:hover {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+
+  /* ============================================================
+     卡组图片导出弹窗
+     ============================================================ */
+  .poster-modal-content { max-width: 430px; }
+  .poster-modal-body { padding-top: 2px; }
+  .poster-seg {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0 12px;
+  }
+  .poster-seg-btn {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--shape-full);
+    cursor: pointer;
+    transition: color var(--motion-short), border-color var(--motion-short),
+                background-color var(--motion-short);
+  }
+  .poster-seg-btn:hover { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+  .poster-seg-btn.active {
+    color: var(--primary);
+    border-color: color-mix(in srgb, var(--primary) 60%, transparent);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+  .poster-desc {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--muted);
+    min-height: 42px;
+  }
+  .poster-progress {
+    min-height: 18px;
+    font-size: 12.5px;
+    color: var(--primary);
+    line-height: 1.5;
+  }
+  .poster-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 14px;
+  }
+  .poster-actions .btn { min-width: 88px; justify-content: center; }
+
+  /* ============================================================
+     加入卡组的飞入动画（正式的卡面浮层，从卡牌库飞到卡组列表）
+     ============================================================ */
+  .fly-card {
+    position: fixed;
+    z-index: 10060;
+    pointer-events: none;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+    will-change: transform, opacity;
+  }
+  .fly-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* 落地时目标行闪一下，明确「收到哪去了」 */
+  .deck-row.fly-arrive { animation: deckRowArrive 0.44s ease-out; }
+  @keyframes deckRowArrive {
+    0%   { background-color: color-mix(in srgb, var(--primary) 26%, transparent); }
+    100% { background-color: transparent; }
+  }
+  body.force-reduce-motion .fly-card { display: none; }
