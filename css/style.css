@@ -3133,3 +3133,30 @@ body.no-border .kw-tip { border-color: transparent; }
     border-color: var(--primary);
   }
   .detail-toggle[hidden] { display: none; }
+
+  /* ============================================================
+     加卡飞入：飞的是「条形卡」克隆（见 playDeckFlyAnim），不是卡面
+     ============================================================ */
+  .deck-row.fly-strip {
+    position: fixed;
+    z-index: 10060;
+    margin: 0;
+    pointer-events: none;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
+                0 0 22px rgba(74, 163, 255, 0.7),
+                0 10px 24px rgba(0, 0, 0, 0.45);
+    will-change: transform, opacity;
+    isolation: isolate;
+  }
+  .deck-row.fly-strip .row-actions { display: none !important; }
+  body.force-reduce-motion .deck-row.fly-strip { display: none; }
+
+  /* 英雄选择器里的「未上线」职业：能看见、能认出，但点不动 */
+  .hero-item.disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    filter: grayscale(0.85);
+  }
+  .hero-item.disabled:hover .hero-img-wrap img { transform: none; }

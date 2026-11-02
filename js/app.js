@@ -781,6 +781,9 @@ const HERO_LIST = [
   { dbfId: 637,   cardId: "HERO_08", name: "吉安娜",   cardClass: "MAGE" },
   { dbfId: 56550, cardId: "HERO_10", name: "伊利丹",   cardClass: "DEMONHUNTER" },
   { dbfId: 78065, cardId: "HERO_11", name: "阿尔萨斯", cardClass: "DEATHKNIGHT" },
+  // 武僧英雄还没上线：只做展示占位，点了不生效（没有英雄数据、也没有卡组预览可用）。
+  // 图用「年轻的酒仙」NEW1_005 的官方插画 —— 那张原画画的正是陈·风暴烈酒。
+  { dbfId: null, cardId: "NEW1_005", name: "陈·风暴烈酒", cardClass: "MONK", classLabel: "武僧", previewReady: false },
 ];
 
 // ============================================================
@@ -3211,38 +3214,40 @@ function playDeckFlyAnim(card) {
   if (!row) return;
   const a = src.getBoundingClientRect();
   const b = row.getBoundingClientRect();
-  if (a.width < 8 || a.height < 8 || b.width < 8) return;
+  if (a.width < 8 || a.height < 8 || b.width < 8 || b.height < 8) return;
 
-  const el = document.createElement("div");
-  el.className = "fly-card fly-blue";
-  el.style.left = a.left + "px";
-  el.style.top = a.top + "px";
-  el.style.width = a.width + "px";
-  el.style.height = a.height + "px";
-  const im = document.createElement("img");
-  im.alt = "";
-  im.src = cardImgUrl(card, "256x");
-  el.appendChild(im);
+  // 飞的是「条形卡」，不是卡面：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞），
+  // 所以飞行途中看到的东西和落点那一行长得完全一样。
+  const el = row.cloneNode(true);
+  el.className = "deck-row fly-strip";
+  el.removeAttribute("data-card-id");
+  el.removeAttribute("data-hover-card-id");
+  const acts = el.querySelector(".row-actions");
+  if (acts) acts.parentNode.removeChild(acts);
+  el.style.width = b.width + "px";
+  el.style.height = b.height + "px";
+  const startLeft = a.left + a.width / 2 - b.width / 2;
+  const startTop = a.top + a.height / 2 - b.height / 2;
+  el.style.left = startLeft + "px";
+  el.style.top = startTop + "px";
   document.body.appendChild(el);
 
-  // 从起点中心飞到目标行中心，等比缩到行高；中途略微上抛，像被「扔」过去
-  const dx = (b.left + b.width / 2) - (a.left + a.width / 2);
-  const dy = (b.top + b.height / 2) - (a.top + a.height / 2);
-  const s = Math.max(0.08, b.height / a.height);
-  const midS = 1 - (1 - s) * 0.45;
+  // 从起点中心飞到目标行原位；中途略微上抛并轻微放大，落点严格对齐（dx/dy 是净位移）
+  const dx = b.left - startLeft;
+  const dy = b.top - startTop;
   const anim = el.animate([
-    { transform: "translate3d(0,0,0) scale(1)", opacity: 1, filter: "brightness(1)" },
-    { transform: "translate3d(" + (dx * 0.45) + "px," + (dy * 0.45 - 34) + "px,0) scale(" + (midS * 1.06) + ")", opacity: 1, offset: 0.45, filter: "brightness(1.16)" },
-    { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 10) + "px,0) scale(" + (s * 1.02) + ")", opacity: 0.9, offset: 0.82, filter: "brightness(1.06)" },
-    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(" + s + ")", opacity: 0.2, filter: "brightness(1)" }
-  ], { duration: 470, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
+    { transform: "translate3d(0,0,0) scale(0.72)", opacity: 0, filter: "brightness(1.3)" },
+    { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0) scale(1.06)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
+    { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0) scale(1.02)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
+    { transform: "translate3d(" + dx + "px," + dy + "px,0) scale(1)", opacity: 1, filter: "brightness(1)" }
+  ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
   const done = function () {
     el.remove();
     row.classList.add("fly-arrive");
     setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
   };
   if (anim && anim.onfinish !== undefined) anim.onfinish = done;
-  else setTimeout(done, 430);
+  else setTimeout(done, 740);
 }
 
 async function addCardToDeck(card) {
@@ -3569,12 +3574,15 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
     // 不换成占位卡背——卡背放大铺在 40px 行底会很难看，让行自身底色透出来更干净。
     bg.style.display = "none";
   } else {
-    bg.src = cardImgUrl(card, "256x");
+    // 行底图用**插画**：art.hearthstonejson.com 的 512×512 方图（无卡框、无文字），
+    // 比带卡框的卡面渲染更像「官方组卡器的那条彩色横条」。
+    // 取不到时逐级退回：插画 → 中文卡面 → 英文卡面 → 隐藏（让行底色透出来）。
+    bg.src = heroIllustrationUrl(card.id);
     bg.onerror = function() {
-      // 中英文都缺：隐藏，让行自身底色透出来
-      if (this.dataset.triedEn) { this.style.display = "none"; return; }
-      this.dataset.triedEn = "1";
-      this.src = enCardImgUrl(card.id, "256x");
+      const step = this.dataset.artStep || "0";
+      if (step === "0") { this.dataset.artStep = "1"; this.src = cardImgUrl(card, "256x"); return; }
+      if (step === "1") { this.dataset.artStep = "2"; this.src = enCardImgUrl(card.id, "256x"); return; }
+      this.style.display = "none";
     };
   }
 
@@ -3620,7 +3628,15 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
 
   if (isBand) {
     minusBtn.onclick = (e) => { e.stopPropagation(); removeCardFromBand(card.dbfId, bandOwnerDbfId); };
-    plusBtn.style.display = "none";
+    // 乐队行同样提供「+」：直接复用 addCardToBand 的全套校验
+    // （主卡组+乐队合计份数上限、乐队卡位上限、归属卡准入规则都在里面）
+    const bandOwner = deckState.bands.get(bandOwnerDbfId);
+    const bandFull = bandOwner ? bandTotalCount(bandOwner) >= getBandMaxSize(bandOwnerDbfId) : false;
+    const bandAtMax = countCardCopies(card.dbfId) >= maxCopiesOf(card);
+    plusBtn.disabled = bandAtMax || bandFull;
+    plusBtn.style.opacity = plusBtn.disabled ? "0.4" : "1";
+    plusBtn.title = bandAtMax ? "已达携带上限" : (bandFull ? "乐队已满" : "再加一张");
+    plusBtn.onclick = (e) => { e.stopPropagation(); addCardToBand(card, bandOwnerDbfId); };
     removeBtn.onclick = (e) => { e.stopPropagation(); removeCardFromBand(card.dbfId, bandOwnerDbfId); };
   } else {
     // 上限跨「主卡组 + 乐队」合并判断：牛内已占额时不再显示为可点（避免死按钮）
@@ -3994,11 +4010,11 @@ function renderHeroGrid() {
 
   HERO_LIST.forEach(h => {
     const div = document.createElement("div");
-    div.className = "hero-item";
+    div.className = "hero-item" + (h.previewReady === false ? " disabled" : "");
     const imgUrl = heroIllustrationUrl(h.cardId);
     const fallbackUrl = heroRenderUrl(h.cardId, "zhCN");
     const enUrl = heroRenderUrl(h.cardId, "enUS");
-    const clsName = (CLASS_LIST.find(x => x[0] === h.cardClass) || [])[1] || h.cardClass;
+    const clsName = h.classLabel || (CLASS_LIST.find(x => x[0] === h.cardClass) || [])[1] || h.cardClass;
 
     div.innerHTML =
       '<div class="hero-img-wrap">' +
@@ -4008,7 +4024,12 @@ function renderHeroGrid() {
       '<div class="hero-class">' + escapeHtml(clsName) + '</div>' +
       '<div class="hero-name">' + escapeHtml(h.name) + '</div>';
 
-    div.addEventListener("click", () => selectHero(h));
+    if (h.previewReady === false) {
+      div.title = "武僧英雄预览还没开放（英雄数据尚未上线）";
+      div.addEventListener("click", () => toast("武僧英雄预览还没开放，暂时不能选"));
+    } else {
+      div.addEventListener("click", () => selectHero(h));
+    }
     grid.appendChild(div);
   });
 }
