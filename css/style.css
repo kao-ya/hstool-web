@@ -1924,9 +1924,15 @@
     color: var(--on-primary);
     border: none;
     cursor: pointer;
-    transition: filter 0.15s, box-shadow 0.15s;
+    /* 悬停只改 background-color，跟「导出」按钮（.btn-success:hover）同一机制。
+       不能用 filter: brightness()：侧栏是 scale(0.88) 的变换层，层内元素加 filter 会让
+       Chrome 对整个缩放子树重新栅格化 —— 这就是导入按钮悬停抖动、导出不抖的原因。 */
+    transition: background-color 0.15s, box-shadow 0.15s;
   }
-  .deck-sidebar-footer .btn-row .btn-import-mini:hover { filter: brightness(1.1); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+  .deck-sidebar-footer .btn-row .btn-import-mini:hover {
+    background: color-mix(in srgb, var(--primary) 88%, #ffffff);
+    box-shadow: var(--elev-1);
+  }
   .deck-sidebar-footer .btn-row .btn-export-big {
     flex: 1;
     justify-content: center;
