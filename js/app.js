@@ -12,11 +12,13 @@
 // ============================================================
 
 const CARDS_URL = "data/hearthstone_cards_zhCN.json";
+const CARDS_FIRST_URL = "data/cards-first.json";   // 首屏小包：默认排序前 200 张（约 80 KB）
 const CARDS_META_URL = "data/cards-meta.json";
 
 // 全局卡库（加载后填充）
 const DB = {
   ready: false,
+  partial: false,     // true = 只有首屏小包，全量还在后台下载
   error: null,
   loadSeconds: 0,
   cards: [],          // 原始记录数组（已解码枚举）
@@ -612,31 +614,10 @@ function normalizeCard(c) {
   return o;
 }
 
-async function loadCardDatabase() {
-  const t0 = performance.now();
-  // 缓存策略交给 HTTP 响应头（仓库根目录的 _headers 文件）决定，这里不写 cache 参数：
-  //   /data/*.json 在 _headers 里是 max-age=3600 + stale-while-revalidate=86400
-  //   → 1 小时内直接用浏览器/边缘缓存（0 请求），过期后后台静默验证，卡库更新也能自然生效。
-  // 两个坑都踩过，别再走回头路：
-  //   force-cache：浏览器永远用本地旧副本，卡库更新后卡牌总数卡着不变（要手动清缓存）；
-  //   no-cache：每次打开都强制回源，11 MB 卡库要等一个网络往返才开始解析，首屏明显变慢。
-  const [cardsResp, metaResp] = await Promise.all([
-    fetch(CARDS_URL),
-    fetch(CARDS_META_URL),
-  ]);
-  if (!cardsResp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + cardsResp.status + "）");
-  if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
-
-  const rawCards = await cardsResp.json();
-  const meta = await metaResp.json();
-
-  DB.maps = meta.maps || {};
-  DB.imageBase = meta.imageBase || {};
-  DB.sets = meta.sets || [];
-
-  // 原始 JSON 是数组；兼容一下万一被包成 {cards:[...]} 的情况
-  const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
-
+// 把原始记录数组装进 DB。首屏小包与全量包共用同一套逻辑，
+// 这样“换包”不会改变任何字段的形态（normalizeCard 只会做一次幂等补全）。
+function indexCards(list, opts) {
+  opts = opts || {};
   DB.cards = [];
   DB.byDbf.clear();
   DB.byId.clear();
@@ -654,14 +635,14 @@ async function loadCardDatabase() {
   }
 
   // ---- 补 attached_dbf（奇闻卡附属）：id 前缀 <base>t<后缀为空或纯数字> ----
-  // 原始 JSON 不带这个字段，但详情弹窗的「附属卡」面板要用；
-  // 判定依据与后端一致：text 里有「奇闻」标记的卡才算奇闻卡。
+  // 只有全量包才能算：首屏小包里根本没有那些附属卡，算了也是空数组，
+  // 而全量包到达时会重新算一遍，所以这里用 opts.isFull 卡住。
   const CURIO_RE = /<b>\s*奇闻/;
   const curioBases = [];
-  for (const c of DB.cards) {
-    if (c.text && CURIO_RE.test(c.text)) curioBases.push(c);
-  }
-  if (curioBases.length) {
+  if (opts.isFull) {
+    for (const c of DB.cards) {
+      if (c.text && CURIO_RE.test(c.text)) curioBases.push(c);
+    }
     for (const base of curioBases) {
       if (!base.id) continue;
       const prefix = base.id + "t";
@@ -674,19 +655,102 @@ async function loadCardDatabase() {
       hits.sort((x, y) => x - y);
       base.attached_dbf = hits;
     }
+    DB.curioCount = curioBases.length;
+  }
+}
+
+function applyMeta(meta) {
+  DB.maps = (meta && meta.maps) || {};
+  DB.imageBase = (meta && meta.imageBase) || {};
+  DB.sets = (meta && meta.sets) || [];
+}
+
+// 当前视图是否还是「默认首页」——是的话后台换完数据就不用重绘，避免闪一下。
+function isDefaultView() {
+  const q = (searchState && searchState.query) || "";
+  const f = searchState && searchState.filters ? searchState.filters : {};
+  const srt = (searchState && searchState.sort) || "default";
+  const pg = (searchState && searchState.page) || 1;
+  const hasFilter = Object.keys(f).some(k => {
+    const v = f[k];
+    return Array.isArray(v) ? v.length > 0 : (v !== undefined && v !== null && String(v) !== "");
+  });
+  return q === "" && !hasFilter && srt === "default" && pg === 1;
+}
+
+// 第一阶段：小包 + 元数据（两者都很小），拿到就立刻出首屏
+async function loadCardDatabase() {
+  const t0 = performance.now();
+  const [firstResp, metaResp] = await Promise.all([
+    fetch(CARDS_FIRST_URL),
+    fetch(CARDS_META_URL),
+  ]);
+  if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
+
+  const meta = await metaResp.json();
+  applyMeta(meta);
+
+  if (!firstResp.ok) {
+    // 小包没生成/被删：退回老行为，老老实实等全量
+    await loadFullCardDatabase(t0, true);
+    return;
   }
 
-  DB.loadSeconds = (performance.now() - t0) / 1000;
+  const first = await firstResp.json();
+  const firstList = first && Array.isArray(first.cards) ? first.cards : [];
+  if (!firstList.length) {
+    await loadFullCardDatabase(t0, true);
+    return;
+  }
+
+  indexCards(firstList, { isFull: false });
+  DB.declaredTotal = Number(first.total) || firstList.length;
+  DB.partial = true;
   DB.ready = true;
   DB.error = null;
+  DB.loadSeconds = (performance.now() - t0) / 1000;
 
-  // 自检：可收藏数、奇闻数，便于排查数据问题
-  DB.curioCount = curioBases.length;
+  // 后台静默换全量：不 await，失败也不影响已经能用的首屏
+  loadFullCardDatabase(t0, false);
+}
 
-  // 名称名次表：36 390 张卡的中文排序一次 ICU 校对约 130 ms。
-  // 放在首屏之后空闲时段做，做完之后任何一次「按名称 / 带名次兜底的数值排序」
-  // 都只比整数，切换排序不再有可感知的停顿。
-  scheduleNameRanks();
+// 第二阶段：全量卡库。成功后就地替换 DB.cards（同引用不同内容），
+// 若用户已经翻页/搜索/改排序，则按当前状态重跑一次查询；仍是默认首页就不动。
+async function loadFullCardDatabase(t0, mustAwait) {
+  const run = async () => {
+    const t1 = performance.now();
+    const resp = await fetch(CARDS_URL);
+    if (!resp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + resp.status + "）");
+    const rawCards = await resp.json();
+    const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
+    indexCards(list, { isFull: true });
+    DB.partial = false;
+    DB.ready = true;
+    DB.error = null;
+    DB.loadSeconds = (performance.now() - t0) / 1000;
+    DB.fullLoadSeconds = (performance.now() - t1) / 1000;
+
+    const statusEl = document.getElementById("statusText");
+    if (statusEl) statusEl.textContent = DB.cards.length + " 张";
+
+    scheduleNameRanks();
+
+    // 用户已经在看别的东西 → 用全量数据把当前视图重算一次（同参数，不会有观感变化）
+    if (!isDefaultView()) {
+      try { doCardSearch(searchState.page); } catch (e) { console.warn("全量到位后重算失败", e); }
+    } else {
+      const countEl = document.getElementById("cardCount");
+      if (countEl) countEl.textContent = "共 " + DB.cards.length + " 张卡牌 · 第 1 / " + (Math.ceil(DB.cards.length / PAGE_SIZE) || 1) + " 页";
+    }
+  };
+
+  if (mustAwait) { await run(); return; }
+  run().catch(e => {
+    console.warn("全量卡库加载失败，继续使用首屏数据：", e);
+    DB.partial = true;
+    const countEl = document.getElementById("cardCount");
+    if (countEl) countEl.textContent += " · 完整卡库加载失败";
+  });
 }
 
 // ---- 名称名次表（只影响排序速度，不影响结果正确性）----
@@ -2454,7 +2518,15 @@ async function doCardSearch(page) {
       return;
     }
 
-    countEl.textContent = "共 " + r.total + " 张卡牌 · 第 " + searchState.page + " / " + searchState.totalPages + " 页";
+    if (DB.partial) {
+      // 只有首屏小包：总数是知道的（小包里带了 total），但手头只够排第一页，
+      // 所以故意把页数压成 1 —— 别让用户点到一片空白的第 2 页。
+      searchState.totalPages = 1;
+      const declared = DB.declaredTotal || r.total;
+      countEl.textContent = "卡库加载中… 已显示前 " + r.cards.length + " 张（共 " + declared + " 张）";
+    } else {
+      countEl.textContent = "共 " + r.total + " 张卡牌 · 第 " + searchState.page + " / " + searchState.totalPages + " 页";
+    }
 
     // 用上次缓存的卡片尺寸算「这批要立即加载多少张」；搜索/筛选/翻页统一走这里。
     cardImgEagerCount = computeEagerCount();
