@@ -2613,6 +2613,37 @@ function sigKnownYes(cardOrId) {
   return !!id && sigProbe.get(id) === "yes";
 }
 
+// 「已确认没有异画」的卡记在 localStorage 里 7 天，避免每次打开详情都探一次
+// （探一次 = 服务端往 wiki 发 4 个候选请求，代价不小）
+const SIG_MISS_KEY = "hstool-sig-miss";
+const SIG_MISS_TTL = 7 * 24 * 3600 * 1000;
+let sigMissMap = null;
+function loadSigMiss() {
+  if (sigMissMap) return sigMissMap;
+  sigMissMap = new Map();
+  try {
+    const raw = localStorage.getItem(SIG_MISS_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    const now = Date.now();
+    if (obj) {
+      Object.keys(obj).forEach(function (k) {
+        if (now - obj[k] < SIG_MISS_TTL) sigMissMap.set(k, obj[k]);
+      });
+    }
+  } catch (_) {}
+  return sigMissMap;
+}
+function sigMissHas(id) { return loadSigMiss().has(id); }
+function sigMissAdd(id) {
+  const m = loadSigMiss();
+  m.set(id, Date.now());
+  try {
+    const obj = {};
+    m.forEach(function (v, k) { obj[k] = v; });
+    localStorage.setItem(SIG_MISS_KEY, JSON.stringify(obj));
+  } catch (_) {}
+}
+
 // 真正去问一次「这张卡有没有异画」：加载一张 256 宽的异画缩略图，
 // onload 说明有、onerror 说明没有（代理对缺图返 502）。结果永久缓存。
 function probeSignatureArt(cardOrId) {
@@ -2622,12 +2653,14 @@ function probeSignatureArt(cardOrId) {
   if (hit === "yes") return Promise.resolve(true);
   if (hit === "no") return Promise.resolve(false);
   if (hit && typeof hit.then === "function") return hit;
+  if (sigMissHas(id)) { sigProbe.set(id, "no"); return Promise.resolve(false); }
   const p = new Promise(function (resolve) {
     let done = false;
     const end = function (ok) {
       if (done) return;
       done = true;
       sigProbe.set(id, ok ? "yes" : "no");
+      if (!ok) sigMissAdd(id);
       resolve(ok);
     };
     const img = new Image();
