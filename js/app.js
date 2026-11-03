@@ -2591,6 +2591,10 @@ function loadSignatureIndex() {
   return signatureLoading;
 }
 
+// 代理 URL 的版本号：CF 边缘按完整 URL 缓存响应，旧 URL 上可能挂着被钉死的
+// 502（「暂时取不到」），换一个 URL 才能立刻走出旧结论。语义变了就 +1。
+const SIG_URL_VER = 2;
+
 // 该卡有没有异画版（与设置无关，供 UI 判断是否显示入口）
 function hasSignatureArt(cardOrId) {
   if (!signatureIndex) return false;
@@ -2604,7 +2608,7 @@ function signatureImgUrl(cardOrId, size) {
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
   if (!id) return "";
   const w = size === "512x" ? 512 : (size === "1024x" ? 1024 : 256);
-  return "api/hs-signature?card=" + encodeURIComponent(id) + "&w=" + w;
+  return "api/hs-signature?card=" + encodeURIComponent(id) + "&w=" + w + "&v=" + SIG_URL_VER;
 }
 
 // 该卡是否已确认有异画（只有探测成功过才算，避免放出点了没图的按钮）
@@ -2658,7 +2662,7 @@ function probeSignatureArt(cardOrId) {
   if (hit === "no") return Promise.resolve(false);
   if (hit && typeof hit.then === "function") return hit;
   if (sigMissHas(id)) { sigProbe.set(id, "no"); return Promise.resolve(false); }
-  const url = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256";
+  const url = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256&v=" + SIG_URL_VER;
   // 用 no-cache（每次跟服务端确认一次）：force-cache 会把浏览器里早先缓存的
   // 502 / 错误响应一直端出来，导致「服务端明明修好了，探测却永远失败」。
   const p = fetch(url, { cache: "no-cache" })
