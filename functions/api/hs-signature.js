@@ -27,6 +27,8 @@ const UA =
   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const REFERER = "https://hearthstone.wiki.gg/zh/wiki/%E5%BC%82%E7%94%BB%E5%8D%A1";
 const ID_RE = /^[A-Za-z0-9_]{1,48}$/;
+// 缓存键版本号：404/502 的判定规则改过就 +1，避免边缘缓存里的旧结论一直生效
+const CACHE_VER = 2;
 
 function buildTargets(id, w) {
   const list = [];
@@ -69,7 +71,7 @@ export async function onRequestGet(context) {
   const w = [256, 512, 1024].indexOf(width) >= 0 ? width : 0;
 
   const cache = typeof caches !== "undefined" ? caches.default : null;
-  const cacheKey = new Request(url.origin + "/api/hs-signature?card=" + id + "&w=" + w, { method: "GET" });
+  const cacheKey = new Request(url.origin + "/api/hs-signature?card=" + id + "&w=" + w + "&v=" + CACHE_VER, { method: "GET" });
   if (cache) {
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
