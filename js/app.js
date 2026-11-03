@@ -2615,7 +2615,9 @@ function sigKnownYes(cardOrId) {
 
 // 「已确认没有异画」的卡记在 localStorage 里 7 天，避免每次打开详情都探一次
 // （探一次 = 服务端往 wiki 发 4 个候选请求，代价不小）
-const SIG_MISS_KEY = "hstool-sig-miss";
+// 换名到 -miss2：旧 key（"hstool-sig-miss"）里可能已经把「服务器暂时取不到」
+// 误记成「没有异画」，换名即让那批脏数据失效，用户不用手动清 localStorage。
+const SIG_MISS_KEY = "hstool-sig-miss2";
 const SIG_MISS_TTL = 7 * 24 * 3600 * 1000;
 let sigMissMap = null;
 function loadSigMiss() {
@@ -2644,8 +2646,10 @@ function sigMissAdd(id) {
   } catch (_) {}
 }
 
-// 真正去问一次「这张卡有没有异画」：加载一张 256 宽的异画缩略图，
-// onload 说明有、onerror 说明没有（代理对缺图返 502）。结果永久缓存。
+// 真正去问一次「这张卡有没有异画」。
+// 不能用 new Image() 的 onload/onerror：那样读不到状态码，
+// 「服务器暂时取不到（5xx/网络异常）」会被误当成「这张卡没有异画」并缓存 7 天。
+// 代理约定：200 = 有图；404 = 这张卡确实没有；502 = 暂时取不到（不要记）。
 function probeSignatureArt(cardOrId) {
   const id = (cardOrId && typeof cardOrId === "object") ? cardOrId.id : String(cardOrId || "");
   if (!id) return Promise.resolve(false);
@@ -2654,21 +2658,27 @@ function probeSignatureArt(cardOrId) {
   if (hit === "no") return Promise.resolve(false);
   if (hit && typeof hit.then === "function") return hit;
   if (sigMissHas(id)) { sigProbe.set(id, "no"); return Promise.resolve(false); }
-  const p = new Promise(function (resolve) {
-    let done = false;
-    const end = function (ok) {
-      if (done) return;
-      done = true;
-      sigProbe.set(id, ok ? "yes" : "no");
-      if (!ok) sigMissAdd(id);
-      resolve(ok);
-    };
-    const img = new Image();
-    img.onload = function () { end(true); };
-    img.onerror = function () { end(false); };
-    img.src = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256";
-    setTimeout(function () { end(false); }, 8000);
-  });
+  const url = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256";
+  const p = fetch(url, { cache: "force-cache" })
+    .then(function (res) {
+      if (res.ok) {
+        sigProbe.set(id, "yes");
+        return true;
+      }
+      if (res.status === 404) {
+        // 真没有：记住 7 天，省掉重复探测
+        sigProbe.set(id, "no");
+        sigMissAdd(id);
+        return false;
+      }
+      // 5xx / 其它异常：只是这次没取到，不写否定缓存，下次打开详情再试
+      sigProbe.delete(id);
+      return false;
+    })
+    .catch(function () {
+      sigProbe.delete(id);
+      return false;
+    });
   sigProbe.set(id, p);
   return p;
 }
@@ -2709,6 +2719,12 @@ function cardImgErr(img, cardId, size) {
     const normal = IMG_HOST + "zhCN/" + (size || "256x") + "/" + id + ".png";
     if (img.dataset.src) img.dataset.src = normal;
     img.src = normal;
+    // 图没了就把「正在看异画」的状态收回来，按钮文案跟着回到「看异画卡面」
+    try {
+      if (typeof detailSig !== "undefined") detailSig = false;
+      const btn = document.getElementById("detailSigBtn");
+      if (btn) btn.textContent = "看异画卡面";
+    } catch (_) {}
     return;
   }
   if (!img.dataset.triedEn) {

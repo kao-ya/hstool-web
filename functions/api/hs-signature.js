@@ -78,6 +78,7 @@ export async function onRequestGet(context) {
   const targets = buildTargets(id, w);
   const tried = [];
   let lastErr = "";
+  let hadError = false; // 网络异常 / 上游 5xx：属于「暂时取不到」，不能当成「没有这张图」
 
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i];
@@ -87,11 +88,13 @@ export async function onRequestGet(context) {
     } catch (e) {
       lastErr = (e && e.message) ? e.message : "fetch failed";
       tried.push(target + " -> throw");
+      hadError = true;
       continue;
     }
     const ctype = (upstream.headers.get("Content-Type") || "").toLowerCase();
     if (!upstream.ok || ctype.indexOf("image/") !== 0) {
       tried.push(target + " -> " + upstream.status);
+      if (upstream.status >= 500) hadError = true;
       continue;
     }
     const res = new Response(upstream.body, {
@@ -109,15 +112,17 @@ export async function onRequestGet(context) {
     return res;
   }
 
-  // 负结果也在边缘缓存一天：没有异画的卡每次打开详情都会探一次，
-  // 不缓存的话等于每次都要往 wiki 发 4 个请求。
+  // 全都 404 → 这张卡确实没有异画图，回 404（前端据此记「没有」缓存）；
+  // 出现网络异常或上游 5xx → 回 502，让前端下次还能再试（不写否定缓存）。
+  const status = hadError ? 502 : 404;
   const miss = new Response("no signature art: " + tried.join(" | ") + (lastErr ? " | " + lastErr : ""), {
-    status: 502,
+    status: status,
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "public, max-age=86400",
+      // 404 在边缘缓存一天（省掉重复探测）；502 不缓存
+      "Cache-Control": hadError ? "no-store" : "public, max-age=86400",
     },
   });
-  if (cache) context.waitUntil(cache.put(cacheKey, miss.clone()));
+  if (cache && !hadError) context.waitUntil(cache.put(cacheKey, miss.clone()));
   return miss;
 }
