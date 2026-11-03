@@ -259,7 +259,8 @@
     -webkit-font-smoothing: antialiased;
     /* 背景图：同目录下的 Background.jpg（缺失时回退到暖色渐变） */
     background-color: #f3ecdd;
-    background-image: url("../img/Background.jpg");
+    /* 背景图：1600 宽 + 烘焙好的模糊（192 KB → 24 KB，原始 Background.jpg 留作备份不引用） */
+  background-image: url("../img/bg-blur-1600.webp");
     background-size: cover;
     background-position: center center;
     background-repeat: no-repeat;
