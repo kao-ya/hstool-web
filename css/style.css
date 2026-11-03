@@ -3077,7 +3077,11 @@ body.no-border .kw-tip { border-color: transparent; }
     flex: 1 1 auto;
     min-height: 0;
     max-height: none;
-    align-content: start;   /* 关键：不让 grid 在确定高度下把行高拉伸/压扁 */
+    align-content: start;
+    /* 关键：网格一旦拿到「确定高度」，auto 行会被压缩到几像素
+       （卡片彼此叠在一起）。max-content 让每行按内容撑高，
+       超出部分交给 overflow-y 滚动。 */
+    grid-auto-rows: max-content;
   }
   .preview-main > .card-plain > .pagination {
     flex: 0 0 auto;
