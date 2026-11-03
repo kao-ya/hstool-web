@@ -1412,7 +1412,15 @@
   }
   .deck-cards-list::-webkit-scrollbar { width: 0; height: 0; display: none; }  /* Chromium / Safari */
   .deck-empty {
-    padding: 30px 16px;
+    /* 空态要在整块列表区里居中：撑满高度 + flex 居中，而不是从顶部往下排 */
+    box-sizing: border-box;
+    min-height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
     text-align: center;
     color: var(--muted-light);
     font-size: 11.5px;
@@ -2623,6 +2631,35 @@
   }
 
   /* ============================================================
+   解码 / 编码页：内容不足一屏时把输出区拉伸填满，底部不留空白带
+   ============================================================ */
+#tab-decode:not(.hidden),
+#tab-encode:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 68px);   /* 48px 导航 + 20px 容器上内边距 */
+}
+#tab-decode > .card:last-child,
+#tab-encode > .card:last-child {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  margin-bottom: 0;
+}
+#tab-decode > .card:last-child > .output,
+#tab-encode > .card:last-child > .output {
+  flex: 1 1 auto;
+}
+
+/* 这两个页面已经按视口算高，去掉容器底部内边距，避免多出一条可滚动的空白 */
+body:has(#tab-decode:not(.hidden)) .container,
+body:has(#tab-encode:not(.hidden)) .container {
+  padding-bottom: 0;
+}
+
+
+/* ============================================================
    第一梯队补齐：关键词解释 tip / 符文章 / 排序下拉容器
    ============================================================ */
 .detail-text .kw {
