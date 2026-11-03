@@ -8,6 +8,27 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='18' y='8' width='64' height='84' rx='12' fill='%23b8893a'/><rect x='30' y='24' width='40' height='52' rx='8' fill='%232e2119'/><path d='M30 42h40M30 56h26' stroke='%23f0c169' stroke-width='6' stroke-linecap='round'/></svg>">
 <!-- 无卡图时的占位卡背：约 29% 的卡在数据源里就没有图，提前预热避免加载时才现取 -->
 <link rel="preload" as="image" href="img/nocard.png">
+<!-- 首屏骨架屏：卡库（约 1.6MB br）到达前先把版面画出来，样式内联，无需额外请求。
+     尺寸与真实卡牌一致（图 256/372 + 名字条 30px），换成真卡时不会跳动。 -->
+<style id="bootSkeletonStyle">
+  .sk-card {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid var(--border, #4a3a29);
+    background: color-mix(in srgb, var(--card, #2a2118) 82%, transparent);
+  }
+  .sk-art, .sk-name {
+    background: linear-gradient(90deg, rgba(255,255,255,.045) 25%, rgba(255,255,255,.11) 50%, rgba(255,255,255,.045) 75%);
+    background-size: 200% 100%;
+    animation: skShimmer 1.4s ease-in-out infinite;
+  }
+  .sk-art { aspect-ratio: 256 / 372; }
+  .sk-name { height: 30px; border-top: 1px solid var(--border, #4a3a29); }
+  @keyframes skShimmer { from { background-position: 100% 0 } to { background-position: -100% 0 } }
+  /* 覆盖全屏遮罩的 display:flex —— 加载时不再用磨砂遮罩挡住骨架 */
+  .loading-overlay[hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { .sk-art, .sk-name { animation: none } }
+</style>
 <link rel="stylesheet" href="css/style.css">
 <base target="_blank">
 </head>
@@ -63,7 +84,20 @@
 
         <div class="card card-plain" style="padding:14px;">
           <div class="card-grid" id="cardGrid">
-            <div class="empty-state">搜索后显示卡牌列表</div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
+            <div class="sk-card"><div class="sk-art"></div><div class="sk-name"></div></div>
           </div>
           <div class="pagination" id="pagination" style="display:none;"></div>
         </div>
@@ -486,7 +520,7 @@
   <img id="globalHoverImg" src="" alt="">
 </div>
 <!-- 全局加载遮罩 -->
-<div class="loading-overlay" id="loadingOverlay">
+<div class="loading-overlay" id="loadingOverlay" hidden>
   <div class="loading-box">
     <div class="loading-ring"></div>
     <div class="loading-title">正在加载卡牌数据…</div>
