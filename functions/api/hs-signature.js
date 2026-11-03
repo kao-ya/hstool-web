@@ -80,36 +80,42 @@ export async function onRequestGet(context) {
   let lastErr = "";
   let hadError = false; // 网络异常 / 上游 5xx：属于「暂时取不到」，不能当成「没有这张图」
 
-  for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    let upstream;
-    try {
-      upstream = await tryFetch(target);
-    } catch (e) {
-      lastErr = (e && e.message) ? e.message : "fetch failed";
-      tried.push(target + " -> throw");
-      hadError = true;
-      continue;
+  // 同一个后缀的两路候选（中文站 / 英文站）并发去取，按优先级判定结果：
+  // 串行要 4 个 RTT（实测「确实没有异画」的卡要 3.1s），并发只要 2 个，
+  // 用户点开详情时按钮出现得快很多。
+  for (let s = 0; s < SUFFIXES.length; s++) {
+    const group = targets.slice(s * BASES.length, (s + 1) * BASES.length);
+    const settled = await Promise.allSettled(group.map(t => tryFetch(t)));
+    for (let i = 0; i < group.length; i++) {
+      const target = group[i];
+      const r = settled[i];
+      if (r.status === "rejected") {
+        lastErr = (r.reason && r.reason.message) ? r.reason.message : "fetch failed";
+        tried.push(target + " -> throw");
+        hadError = true;
+        continue;
+      }
+      const upstream = r.value;
+      const ctype = (upstream.headers.get("Content-Type") || "").toLowerCase();
+      if (!upstream.ok || ctype.indexOf("image/") !== 0) {
+        tried.push(target + " -> " + upstream.status);
+        if (upstream.status >= 500) hadError = true;
+        continue;
+      }
+      const res = new Response(upstream.body, {
+        status: 200,
+        headers: {
+          "Content-Type": ctype,
+          // 异画图内容不会变（文件名带固定后缀），可以长缓存
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Access-Control-Allow-Origin": "*",
+          // 便于排查命中哪一路候选（不含隐私信息）
+          "X-Sig-Src": target.replace("https://hearthstone.wiki.gg", ""),
+        },
+      });
+      if (cache) context.waitUntil(cache.put(cacheKey, res.clone()));
+      return res;
     }
-    const ctype = (upstream.headers.get("Content-Type") || "").toLowerCase();
-    if (!upstream.ok || ctype.indexOf("image/") !== 0) {
-      tried.push(target + " -> " + upstream.status);
-      if (upstream.status >= 500) hadError = true;
-      continue;
-    }
-    const res = new Response(upstream.body, {
-      status: 200,
-      headers: {
-        "Content-Type": ctype,
-        // 异画图内容不会变（文件名带固定后缀），可以长缓存
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Access-Control-Allow-Origin": "*",
-        // 便于排查命中哪一路候选（不含隐私信息）
-        "X-Sig-Src": target.replace("https://hearthstone.wiki.gg", ""),
-      },
-    });
-    if (cache) context.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
   }
 
   // 全都 404 → 这张卡确实没有异画图，回 404（前端据此记「没有」缓存）；

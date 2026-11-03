@@ -2659,7 +2659,9 @@ function probeSignatureArt(cardOrId) {
   if (hit && typeof hit.then === "function") return hit;
   if (sigMissHas(id)) { sigProbe.set(id, "no"); return Promise.resolve(false); }
   const url = "api/hs-signature?card=" + encodeURIComponent(id) + "&w=256";
-  const p = fetch(url, { cache: "force-cache" })
+  // 用 no-cache（每次跟服务端确认一次）：force-cache 会把浏览器里早先缓存的
+  // 502 / 错误响应一直端出来，导致「服务端明明修好了，探测却永远失败」。
+  const p = fetch(url, { cache: "no-cache" })
     .then(function (res) {
       if (res.ok) {
         sigProbe.set(id, "yes");
