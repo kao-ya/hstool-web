@@ -2630,34 +2630,6 @@
     z-index: 2;
   }
 
-  /* ============================================================
-   解码 / 编码页：内容不足一屏时把输出区拉伸填满，底部不留空白带
-   ============================================================ */
-#tab-decode:not(.hidden),
-#tab-encode:not(.hidden) {
-  display: flex;
-  flex-direction: column;
-  min-height: calc(100vh - 68px);   /* 48px 导航 + 20px 容器上内边距 */
-}
-#tab-decode > .card:last-child,
-#tab-encode > .card:last-child {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 150px;
-  margin-bottom: 0;
-}
-#tab-decode > .card:last-child > .output,
-#tab-encode > .card:last-child > .output {
-  flex: 1 1 auto;
-}
-
-/* 这两个页面已经按视口算高，去掉容器底部内边距，避免多出一条可滚动的空白 */
-body:has(#tab-decode:not(.hidden)) .container,
-body:has(#tab-encode:not(.hidden)) .container {
-  padding-bottom: 0;
-}
-
 
 /* ============================================================
    第一梯队补齐：关键词解释 tip / 符文章 / 排序下拉容器
@@ -3071,3 +3043,43 @@ body.no-border .kw-tip { border-color: transparent; }
     filter: grayscale(0.85);
   }
   .hero-item.disabled:hover .hero-img-wrap img { transform: none; }
+
+/* ============================================================
+   组卡器页：左列（搜索栏 + 卡牌网格 + 分页栏）撑满一屏，
+   分页栏正好落在浏览器底部，网格因此能多显示一行；
+   右列卡组栏同步变高，卡组列表可显示更多行。
+   （单列布局 ≤1100px 不适用，页面本来就该滚动）
+   ============================================================ */
+@media (min-width: 1101px) {
+  /* 这一层被 scale(0.92) 缩放过：视觉高度 = 布局高度 × 0.92，
+     所以布局盒会比视口多出 8%。把外层 section 钉成视口高度并裁掉溢出，
+     文档高度才不会被撑出多余的一条可滚动区域。 */
+  #tab-preview:not(.hidden) {
+    height: calc(100vh - 68px);
+    overflow: hidden;
+  }
+  .preview-page {
+    height: calc((100vh - 68px) / 0.92);
+  }
+  .preview-main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .preview-main > .card-plain {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 0;
+  }
+  .preview-main > .card-plain > .card-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    align-content: start;   /* 关键：不让 grid 在确定高度下把行高拉伸/压扁 */
+  }
+  .preview-main > .card-plain > .pagination {
+    flex: 0 0 auto;
+  }
+}
