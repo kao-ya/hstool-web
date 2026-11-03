@@ -1564,9 +1564,6 @@ function loadSets() {
     await loadCardDatabase();
   } catch (e) {
     clearInterval(timer);
-    // 骨架屏占着位置，失败了得把遮罩亮出来告诉用户（平时它是 hidden 的）
-    const ov = document.getElementById("loadingOverlay");
-    if (ov) ov.hidden = false;
     subEl.textContent = "卡牌数据加载失败：" + (e.message || e) +
       "（请确认 data/hearthstone_cards_zhCN.json 与 data/cards-meta.json 存在且可访问）";
     subEl.style.color = "#ef4444";
@@ -4199,7 +4196,6 @@ function showLoadingOverlay(subText) {
   const el = document.getElementById("loadingOverlay");
   const sub = document.getElementById("loadingSub");
   if (subText) sub.textContent = subText;
-  el.hidden = false;
   el.style.display = "";
   el.classList.remove("done");
 }
@@ -4207,7 +4203,6 @@ function showLoadingOverlay(subText) {
 function hideLoadingOverlay() {
   const el = document.getElementById("loadingOverlay");
   el.classList.add("done");
-  el.hidden = true;
   setTimeout(() => { el.style.display = "none"; }, 400);
 }
 
