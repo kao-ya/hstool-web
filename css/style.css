@@ -1303,8 +1303,9 @@
   .deck-sidebar {
     position: sticky;
     top: 76px;
-    /* 高度按父级撑满；因为自身还有 0.88 的缩放，CSS 高度要除以 0.88 才能视觉占满 */
-    height: calc(100% / 0.88);
+    /* 高度按父级撑满，但底部留 20px（与顶部距导航栏的 20px 对称）：
+       父级与自身各有一层缩放（0.92 × 0.88），所以「视觉 20px」要先换算成布局 px。 */
+    height: calc((100% - 21.74px) / 0.88);
     max-height: none;
     display: flex;
     flex-direction: column;
