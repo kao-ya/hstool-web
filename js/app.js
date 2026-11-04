@@ -12,13 +12,12 @@
 // ============================================================
 
 const CARDS_URL = "data/hearthstone_cards_zhCN.json";
-const CARDS_FIRST_URL = "data/cards-first.json";   // 首屏小包：默认排序前 200 张（约 80 KB）
 const CARDS_META_URL = "data/cards-meta.json";
 
 // 全局卡库（加载后填充）
 const DB = {
   ready: false,
-  partial: false,     // true = 只有首屏小包，全量还在后台下载
+  partial: false,     // 历史字段（两阶段加载已回退，恒为 false）
   error: null,
   loadSeconds: 0,
   cards: [],          // 原始记录数组（已解码枚举）
@@ -723,45 +722,33 @@ function loadLog(kind, text) {
 
 async function loadCardDatabase() {
   const t0 = performance.now();
-  loadLog("db", "卡库：请求小包 + meta");
-  const [firstResp, metaResp] = await Promise.all([
-    fetch(CARDS_FIRST_URL),
+  loadLog("db", "卡库：请求全量 + meta");
+  const [cardsResp, metaResp] = await Promise.all([
+    fetch(CARDS_URL),
     fetch(CARDS_META_URL),
   ]);
   if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
+  if (!cardsResp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + cardsResp.status + "）");
 
   const meta = await metaResp.json();
   applyMeta(meta);
 
-  if (!firstResp.ok) {
-    // 小包没生成/被删：退回老行为，老老实实等全量
-    await loadFullCardDatabase(t0, true);
-    return;
-  }
-
-  const first = await firstResp.json();
-  const firstList = first && Array.isArray(first.cards) ? first.cards : [];
-  if (!firstList.length) {
-    await loadFullCardDatabase(t0, true);
-    return;
-  }
-
-  indexCards(firstList, { isFull: false });
-  DB.declaredTotal = Number(first.total) || firstList.length;
-  DB.partial = true;
+  const rawCards = await cardsResp.json();
+  const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
+  indexCards(list, { isFull: true });
+  DB.partial = false;
   DB.ready = true;
   DB.error = null;
   DB.loadSeconds = (performance.now() - t0) / 1000;
-  loadLog("ok", "卡库小包 " + firstList.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
+  DB.fullLoadSeconds = DB.loadSeconds;
+  loadLog("ok", "卡库 " + list.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
 
-  // 小包一到就撤遮罩/进界面（不等任何后续数据）
-  enterAppFromPartial();
-
-  // 后台静默换全量：不 await，失败也不影响已经能用的首屏
-  loadFullCardDatabase(t0, false);
+  // 卡库就绪 —— 此时才轮到卡组缩略图预取
+  if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
+  scheduleNameRanks();
 }
 
-// 小包就绪 → 立刻撤掉加载弹窗与遮罩、初始化界面。只执行一次。
+// 卡库就绪 → 撤掉加载弹窗与遮罩、初始化界面。只执行一次。
 let __enteredApp = false;
 function enterAppFromPartial() {
   if (__enteredApp) return;
@@ -785,49 +772,6 @@ function enterAppFromPartial() {
     initPreview();
   }
   try { renderDeckHeroCard(); } catch (e) {}
-}
-
-// 第二阶段：全量卡库。成功后就地替换 DB.cards（同引用不同内容），
-// 若用户已经翻页/搜索/改排序，则按当前状态重跑一次查询；仍是默认首页就不动。
-async function loadFullCardDatabase(t0, mustAwait) {
-  const run = async () => {
-    const t1 = performance.now();
-    loadLog("db", "卡库全量：下载 10 MB");
-    const resp = await fetch(CARDS_URL);
-    if (!resp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + resp.status + "）");
-    const rawCards = await resp.json();
-    const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
-    indexCards(list, { isFull: true });
-    loadLog("ok", "卡库全量 " + list.length + " 张 / " + Math.round(performance.now() - t1) + "ms");
-    DB.partial = false;
-    // 全量卡库就绪 —— 此时才轮到卡组缩略图预取（在此之前一律让位给这 10 MB）
-    if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
-    DB.ready = true;
-    DB.error = null;
-    DB.loadSeconds = (performance.now() - t0) / 1000;
-    DB.fullLoadSeconds = (performance.now() - t1) / 1000;
-
-    const statusEl = document.getElementById("statusText");
-    if (statusEl) statusEl.textContent = DB.cards.length + " 张";
-
-    scheduleNameRanks();
-
-    // 用户已经在看别的东西 → 用全量数据把当前视图重算一次（同参数，不会有观感变化）
-    if (!isDefaultView()) {
-      try { doCardSearch(searchState.page); } catch (e) { console.warn("全量到位后重算失败", e); }
-    } else {
-      const countEl = document.getElementById("cardCount");
-      if (countEl) countEl.textContent = "共 " + DB.cards.length + " 张卡牌 · 第 1 / " + (Math.ceil(DB.cards.length / PAGE_SIZE) || 1) + " 页";
-    }
-  };
-
-  if (mustAwait) { await run(); return; }
-  run().catch(e => {
-    console.warn("全量卡库加载失败，继续使用首屏数据：", e);
-    DB.partial = true;
-    const countEl = document.getElementById("cardCount");
-    if (countEl) countEl.textContent += " · 完整卡库加载失败";
-  });
 }
 
 // ---- 名称名次表（只影响排序速度，不影响结果正确性）----
@@ -1718,8 +1662,7 @@ function loadSets() {
   dot.className = "status-dot ok";
   txt.textContent = DB.cards.length + " 张";
 
-  // 正常情况下小包一好就已经在 enterAppFromPartial 里进界面了；这里只兜底
-  // （比如小包路径没走成、直接等全量的老分支）。
+  // 进界面（enterAppFromPartial 只执行一次，这里调用是唯一入口）。
   if (!__enteredApp) {
     const elapsed = Date.now() - t0;
     if (elapsed < MIN_SHOW) {
@@ -2591,15 +2534,7 @@ async function doCardSearch(page) {
       return;
     }
 
-    if (DB.partial) {
-      // 只有首屏小包：总数是知道的（小包里带了 total），但手头只够排第一页，
-      // 所以故意把页数压成 1 —— 别让用户点到一片空白的第 2 页。
-      searchState.totalPages = 1;
-      const declared = DB.declaredTotal || r.total;
-      countEl.textContent = "卡库加载中… 已显示前 " + r.cards.length + " 张（共 " + declared + " 张）";
-    } else {
-      countEl.textContent = "共 " + r.total + " 张卡牌 · 第 " + searchState.page + " / " + searchState.totalPages + " 页";
-    }
+    countEl.textContent = "共 " + r.total + " 张卡牌 · 第 " + searchState.page + " / " + searchState.totalPages + " 页";
 
     // 用上次缓存的卡片尺寸算「这批要立即加载多少张」；搜索/筛选/翻页统一走这里。
     cardImgEagerCount = computeEagerCount();
@@ -6636,8 +6571,8 @@ function prefetchDeckArt() {
 //   把它们逐张拉进浏览器 HTTP 缓存；悬停时直接命中缓存，零等待。
 //
 // 优先级纪律（用户明确要求）：10 MB 卡库优先。
-//   · DB.ready 为假 或 DB.partial 为真（此刻还在用小包跑首屏）→ 一张都不发，
-//     只挂一个 1200ms 的闹钟继续等；全量就绪时会由 loadFullCardDatabase 主动叫醒。
+//   · DB.ready 为假（卡库还在下载）→ 一张都不发，只挂一个 1200ms 的闹钟继续等；
+//     卡库就绪时会由 loadCardDatabase 主动叫醒。
 //   · 就绪后每 80ms 只发 2 张、fetchPriority=low —— 不和首屏抢带宽与连接。
 //   · 同一张卡只发一次（deckThumbDone），导入/增删卡导致的重排不会重复下载。
 // ============================================================
