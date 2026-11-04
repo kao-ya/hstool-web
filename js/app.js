@@ -489,6 +489,17 @@ function cardDetail(dbfId) {
 // ------------------------------------------------------------
 async function api(path, data) {
   data = data || {};
+  // 首屏那一次搜索就是静态包里那一页：默认参数且无筛选时直接本地返回，省掉一个边缘往返
+  if (DB.remote && path === "/api/cards/search" && DB.seed &&
+      (Number(data.offset) || 0) === 0 && (Number(data.limit) || 0) === 200 &&
+      !String(data.query || "").trim() &&
+      (!data.filters || Object.keys(data.filters).every((k) => {
+        const v = data.filters[k];
+        return v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+      })) &&
+      ((data.sort || "default") === "default" || data.sort === undefined)) {
+    return Promise.resolve({ cards: DB.seed, total: DB.declaredTotal, offset: 0, shown: DB.seed.length });
+  }
   // 搜索/详情/状态/英雄/系列：服务端有索引时交给边缘算（结果与本地实现逐条一致）
   if (DB.remote && REMOTE_API[path]) return remoteCall(path, data);
   switch (path) {
@@ -757,6 +768,8 @@ const REMOTE_API = {
   "/api/sets": "/api/sets",
 };
 
+const FIRST_URL = "/data/first.json";   // 首屏静态包：meta + 第一页 200 张 + 11 个英雄，构建时生成
+
 async function remoteCall(path, data) {
   const url = REMOTE_API[path] || path;
   const r = await fetch(url, {
@@ -891,9 +904,11 @@ async function loadCardDatabase() {
   // 服务端索引优先：一次只拿一页，11 MB 的整包永远不下发。
   // 失败（本地没起 Functions、边缘挂了）就退回整包，功能不受影响。
   if (window.__REMOTE_DB__ !== false) {
-    loadLog("db", "服务端索引：请求首屏一页 + meta");
+    loadLog("db", "首屏静态包 static-first / meta");
     try {
-      const r = await fetch("/api/boot", { cache: "no-store" });
+      // 静态包优先：不经过边缘函数，浏览器/CF 都能缓存 1 小时；拿不到再打 /api/boot
+      let r = await fetch(FIRST_URL);
+      if (!r.ok) r = await fetch("/api/boot");
       if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || "boot 失败");
@@ -902,6 +917,8 @@ async function loadCardDatabase() {
       indexCards(boot.cards, { isFull: false });
       DB.remote = true;
       DB.declaredTotal = boot.total;
+      DB.seed = boot.cards;      // 首屏这一页留在内存里，第一次搜索直接用它
+      DB.seedAt = Date.now();
       DB.partial = false;
       DB.ready = true;
       DB.error = null;
@@ -911,11 +928,21 @@ async function loadCardDatabase() {
         " · " + Math.round(performance.now() - t0) + "ms");
       if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
       scheduleNameRanks();
-      // 英雄选择器只认 HERO_LIST 里的这 11 个 dbfId，页面上不等于当前页，得单独补
+      // 英雄卡：静态首屏包里已经带上（省掉 2 个往返），缺失时才按 id 批量补
       try {
-        const heroDbfs = HERO_LIST.map(function (h) { return h.dbfId; }).filter(function (v) { return v !== null && v !== undefined; });
-        await ensureCardsByIds(heroDbfs);
-        await ensureCardsByCardIds(HERO_LIST.map(function (h) { return h.cardId; }).filter(Boolean));
+        const baked = Array.isArray(boot.heroes) ? boot.heroes : [];
+        for (const hc of baked) {
+          const nc = normalizeCard(hc);
+          DB.extra.set(nc.dbfId, nc);
+          if (nc.id) DB.byId.set(nc.id, nc);
+          if (nc.name && !DB.byName.has(nc.name)) DB.byName.set(nc.name, nc);
+          cardCache.set(nc.dbfId, nc);
+        }
+        if (!baked.length) {
+          const heroDbfs = HERO_LIST.map(function (h) { return h.dbfId; }).filter(function (v) { return v !== null && v !== undefined; });
+          await ensureCardsByIds(heroDbfs);
+          await ensureCardsByCardIds(HERO_LIST.map(function (h) { return h.cardId; }).filter(Boolean));
+        }
         if (typeof renderHeroGrid === "function") renderHeroGrid();
       } catch (e) {
         loadLog("err", "英雄卡补齐失败：" + e.message);

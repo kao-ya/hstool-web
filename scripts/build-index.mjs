@@ -92,3 +92,23 @@ fs.writeFileSync(path.join(DATA, "meta.json"), JSON.stringify(meta), "utf8");
 console.log("cards-lite.json", (json.length / 1048576).toFixed(2), "MB / 行数", rows.length);
 console.log("可收藏", rows.filter((r) => r[16]).length, "英雄", rows.filter((r) => r[9] === "HERO").length,
   "带附属卡", rows.filter((r) => r[22].length).length);
+
+// ---- 首屏静态包 data/first.json --------------------------------------------
+// 与 /api/boot 同形：meta + 第一页 200 张 + HERO_LIST 的 11 张英雄卡。
+// 前端首屏直接取它，不经过边缘函数（省掉 4 个往返，还能被浏览器缓存 1 小时）。
+const { pathToFileURL } = await import("url");
+const { createDb } = await import(pathToFileURL(path.join(ROOT, "functions", "_lib", "cards-db.js")).href);
+const db = createDb(JSON.parse(json), meta);
+
+const appJs = fs.readFileSync(path.join(ROOT, "js", "app.js"), "utf8");
+const heroAt = appJs.indexOf("const HERO_LIST");
+const heroDbf = [...appJs.slice(heroAt, heroAt + 2000).matchAll(/dbfId:\s*(\d+)/g)].map((m) => Number(m[1])).slice(0, 11);
+
+const boot = db.boot(200);
+const heroes = db.lookup(heroDbf);
+const firstJson = JSON.stringify({
+  ok: true,
+  result: { meta: boot.meta, cards: boot.cards, total: boot.total, heroes, page_ms: boot.page_ms, built_at: new Date().toISOString() },
+});
+fs.writeFileSync(path.join(DATA, "first.json"), firstJson, "utf8");
+console.log("first.json", (firstJson.length / 1024).toFixed(1), "KB / 首屏", boot.cards.length, "张 / 英雄", heroes.length, "张");
