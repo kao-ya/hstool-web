@@ -3161,7 +3161,7 @@ function createCardElement(card, index) {
   img.decoding = "async";
   img.alt = card.name;
   img.dataset.cardId = card.id;
-  img.src = cardImgUrl(card, "256x");
+  setArt(img, cardImgUrl(card, "256x"));
   // 首屏前 eagerCount 张立即加载（保证首屏无白图），其余交给 IntersectionObserver。
   // eagerCount 由 doCardSearch 按容器尺寸在每次渲染前算好，搜索与筛选走同一套逻辑。
   const eager = (index === undefined) || (index < cardImgEagerCount);
@@ -3519,7 +3519,7 @@ async function renderDetailAttached(card) {
     img.loading = "lazy";
     img.alt = ac.name;
     img.dataset.cardId = ac.id;
-    img.src = cardImgUrl(ac, "256x");
+    setArt(img, cardImgUrl(ac, "256x"));
     // 中文图失败回退英文图，再失败用本地占位图（并把「无图」记入缓存）
     img.addEventListener("error", function() {
       cardImgErr(this, this.dataset.cardId, "256x");
@@ -4011,11 +4011,11 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
     // 行底图用**插画**：art.hearthstonejson.com 的 512×512 方图（无卡框、无文字），
     // 比带卡框的卡面渲染更像「官方组卡器的那条彩色横条」。
     // 取不到时逐级退回：插画 → 中文卡面 → 英文卡面 → 隐藏（让行底色透出来）。
-    bg.src = heroIllustrationUrl(card.id);
+    setArt(bg, heroIllustrationUrl(card.id));
     bg.onerror = function() {
       const step = this.dataset.artStep || "0";
-      if (step === "0") { this.dataset.artStep = "1"; this.src = cardImgUrl(card, "256x"); return; }
-      if (step === "1") { this.dataset.artStep = "2"; this.src = enCardImgUrl(card.id, "256x"); return; }
+      if (step === "0") { this.dataset.artStep = "1"; setArt(this, heroIllustrationUrlFallback(card)); return; }
+      if (step === "1") { this.dataset.artStep = "2"; setArt(this, enCardImgUrl(card.id, "256x")); return; }
       this.style.display = "none";
     };
   }
@@ -4203,6 +4203,29 @@ function renderDeckCards() {
 // ============================================================
 const globalHoverPreview = document.getElementById("globalHoverPreview");
 const globalHoverImg = document.getElementById("globalHoverImg");
+
+// 卡面/插画内存缓存：同一个 URL 在页内只发起一次请求。
+// art.hearthstonejson.com 的 jpg 不带 cache-control（等于「每次都得重新下」），
+// 所以这里用常驻 Image 把资源钉在内存里，后面所有 <img> 复用同一个 URL 就命中内存缓存。
+const artMem = new Map();
+const ART_MEM_MAX = 240;
+function memArt(url) {
+  if (!url) return null;
+  let im = artMem.get(url);
+  if (im) { artMem.delete(url); artMem.set(url, im); return im; }
+  im = new Image();
+  im.decoding = "async";
+  im.src = url;
+  artMem.set(url, im);
+  while (artMem.size > ART_MEM_MAX) artMem.delete(artMem.keys().next().value);
+  return im;
+}
+// 给 <img> 装上 src，同时确保这份资源已经在内存缓存里
+function setArt(img, url) {
+  if (!img || !url) return;
+  memArt(url);
+  img.src = url;
+}
 
 // 悬停预览的图缓存。
 // 以前是把 #globalHoverImg 的 src 直接改成新卡 —— 换卡瞬间旧请求被浏览器取消，
@@ -4478,6 +4501,11 @@ function closeHeroSelector() {
 const HERO_ART_BASE = "https://art.hearthstonejson.com/v1/";
 function heroIllustrationUrl(cardId) {
   return cardId ? HERO_ART_BASE + "512x/" + cardId + ".jpg" : "";
+}
+// 插画取不到时的第 1 级回退：优先 256x 插画（体积只有 512x 的 1/3），失败再由调用方退回卡面
+function heroIllustrationUrlFallback(card) {
+  if (!card || !card.id) return "";
+  return "https://art.hearthstonejson.com/v1/256x/" + card.id + ".jpg";
 }
 function heroRenderUrl(cardId, loc) {
   return cardId ? HERO_ART_BASE + "render/latest/" + (loc || "zhCN") + "/512x/" + cardId + ".png" : "";
@@ -6435,27 +6463,7 @@ const ParticleFX = (function () {
     }
     if (snapBox) ctx.restore();
 
-    // 3) 金光：只画当前边界带
-    let goldHot = null, goldWarm = null;
-    for (let r = 0; r < rows.length; r++) {
-      const cells = rows[r].cells;
-      for (let i = 0; i < cells.length; i++) {
-        const p = cells[i];
-        const near = p.n - snapFront;
-        if (near >= FRONT_BAND) continue;
-        const strength = 1 - near / FRONT_BAND;
-        const grow = 0.6 + strength * 1.6;
-        if (strength > 0.55) {
-          if (!goldHot) goldHot = new Path2D();
-          goldHot.rect(p.x - p.hw - grow, p.y - p.hh - grow, p.hw * 2 + grow * 2, p.hh * 2 + grow * 2);
-        } else {
-          if (!goldWarm) goldWarm = new Path2D();
-          goldWarm.rect(p.x - p.hw - grow, p.y - p.hh - grow, p.hw * 2 + grow * 2, p.hh * 2 + grow * 2);
-        }
-      }
-    }
-    if (goldWarm) { ctx.fillStyle = "rgba(255,198,110,0.72)"; ctx.fill(goldWarm); }
-    if (goldHot) { ctx.fillStyle = "rgba(255,247,222,0.95)"; ctx.fill(goldHot); }
+    // 3) 金光已按需求移除：不再有跟随前沿的金色扫光带
 
     // 4) 碎块：先向上飞，再往下掉（重力 > 初速，抛物线感）
     const keepDust = [];
@@ -6815,8 +6823,9 @@ let deckThumbTimer = 0;
 function deckThumbUrlOf(card) {
   if (!card || isNoArtType(card)) return "";
   if (!card.id) return "";
-  const u = cardImgUrl(card, "256x");
-  return (u && u !== NO_CARD_IMG) ? u : "";
+  // 必须是「行底图真正会请求的那张」：以前这里预取 256x 卡面，而行底图用的是 512x 插画，
+  // 两者 URL 不同 → 预取等于白干，导入后行底图还是要现下。现在预取插画本身。
+  return heroIllustrationUrl(card.id);
 }
 
 function collectDeckThumbs() {
