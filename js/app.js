@@ -4040,6 +4040,44 @@ function renderDeckCards() {
 const globalHoverPreview = document.getElementById("globalHoverPreview");
 const globalHoverImg = document.getElementById("globalHoverImg");
 
+// 悬停预览的图缓存。
+// 以前是把 #globalHoverImg 的 src 直接改成新卡 —— 换卡瞬间旧请求被浏览器取消，
+// 半截的响应不会进缓存，所以「移开再移回」要重新下一遍。
+// 现在改成独立 Image 在后台取图，取到就留在 Map 里（LRU 60 张，约 2 MB）。
+const hoverArtCache = new Map();
+const HOVER_ART_MAX = 60;
+
+function hoverArtFor(cardId) {
+  const key = String(cardId);
+  const hit = hoverArtCache.get(key);
+  if (hit) {
+    // 命中就把它挪到队尾（LRU）
+    hoverArtCache.delete(key);
+    hoverArtCache.set(key, hit);
+    return hit;
+  }
+  const im = new Image();
+  im.decoding = "async";
+  im.onload = function () {
+    // 只有还在显示这张卡时才贴上去；已经换成别的卡就只管偷偷存着
+    if (globalHoverImg.dataset.cardId === key) {
+      globalHoverImg.src = im.src;
+    }
+  };
+  im.onerror = function () {
+    // 三级回退复用原来的 cardImgErr（中文卡面 → 英文卡面 → 隐藏）
+    if (globalHoverImg.dataset.cardId === key) {
+      cardImgErr(globalHoverImg, key, "256x");
+    }
+  };
+  im.src = cardImgUrl(cardId, "256x");
+  hoverArtCache.set(key, im);
+  while (hoverArtCache.size > HOVER_ART_MAX) {
+    hoverArtCache.delete(hoverArtCache.keys().next().value);
+  }
+  return im;
+}
+
 function showCardHoverPreview(cardId, anchorEl, mode) {
   loadLog("hov", "悬停预览 " + cardId);
   if (!cardId || !anchorEl) return;
@@ -4085,26 +4123,26 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
   globalHoverPreview.style.top = top + "px";
   globalHoverPreview.style.transform = "translateY(-50%)";
 
-  // 只在"换了一张卡"时才替换图片源。
-  // 原来的写法每次 mouseenter 都先 removeAttribute("src") 再设新 src，
-  // 即使悬停的是同一张卡也会让图片瞬间清空重载（白闪）；
-  // 配合上面 preview 的 display/opacity 切换，在列表里上下移动鼠标时就会"鬼畜"式闪烁。
-  const nextSrc = cardImgUrl(cardId, "256x");
-  if (globalHoverImg.dataset.cardId !== String(cardId)) {
-    globalHoverImg.dataset.cardId = String(cardId);
+  // 走缓存池：切卡不会取消上一张的下载，移回来直接命中。
+  const key = String(cardId);
+  if (globalHoverImg.dataset.cardId !== key) {
+    globalHoverImg.dataset.cardId = key;
     globalHoverImg.dataset.triedEn = "";
     // 三级回退与卡牌网格 / 详情弹窗统一（见 cardImgErr）
     globalHoverImg.onerror = function() {
       cardImgErr(this, this.dataset.cardId, "256x");
     };
-    // 关键：先把旧位图丢掉，再挂新图。
-    // 浏览器在「新图到达」之前会继续绘制上一张（实测确认），所以只改 src 的话，
-    // 换卡瞬间预览会停留在上一张卡上，图床慢时最长可达数秒。
-    // removeAttribute("src") 会立即丢弃旧位图；此时尺寸由 CSS 的 aspect-ratio 撑住
-    // （见 .global-hover-preview img），不会塌陷跳动。
-    globalHoverImg.removeAttribute("src");
-    // 用 256x 缩略图，加载比 512x 快得多，预览窗宽 260px 刚好够用
-    globalHoverImg.src = nextSrc;
+  }
+  const art = hoverArtFor(cardId);
+  if (art.complete && art.naturalWidth > 0) {
+    // 已缓存：立刻换上（浏览器走内存/磁盘缓存，不会重新请求）
+    if (globalHoverImg.getAttribute("src") !== art.src) globalHoverImg.src = art.src;
+  } else {
+    // 还没取到就先把画面清空（尺寸由 CSS aspect-ratio 撑住，不会跳动）。
+    // 这里必须清 —— 不清的话浮层会继续显示"上一张卡"的画面，等于显示错卡，
+    // 比空白更糟；而清空造成的白闪只在"首次悬停某张卡"时出现一次，
+    // 之后再悬停同一张会直接命中 hoverArtCache，不会闪。
+    if (globalHoverImg.getAttribute("src")) globalHoverImg.removeAttribute("src");
   }
 
   // 保持常显：不反复 add/remove show 类，避免面板在逐行切换时闪烁
