@@ -754,31 +754,37 @@ async function loadCardDatabase() {
   DB.loadSeconds = (performance.now() - t0) / 1000;
   loadLog("ok", "卡库小包 " + firstList.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
 
-  // 后台静默换全量：不 await，失败也不影响已经能用的首屏。
-  // 11 MB JSON 的下载 + JSON.parse 会占住主线程几百毫秒，所以先等首屏画出来、
-  // 浏览器空闲了再开始 —— 用户点进来的那一秒不会卡一下。
-  deferFullLoad(t0);
+  // 小包一到就撤遮罩/进界面（不等任何后续数据）
+  enterAppFromPartial();
+
+  // 后台静默换全量：不 await，失败也不影响已经能用的首屏
+  loadFullCardDatabase(t0, false);
 }
 
-// 全量被推迟到空闲时段跑（只排一次）
-let __fullLoadScheduled = false;
-function deferFullLoad(t0) {
-  if (__fullLoadScheduled) return;
-  __fullLoadScheduled = true;
-  const go = function () { loadFullCardDatabase(t0, false); };
-  const afterPaint = function () {
-    if (typeof window.requestIdleCallback === "function") {
-      window.requestIdleCallback(go, { timeout: 1500 });
-    } else {
-      setTimeout(go, 500);
-    }
-  };
-  // 等两帧，保证首屏（骨架/卡片）已经真的画出来
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(function () { requestAnimationFrame(afterPaint); });
-  } else {
-    setTimeout(afterPaint, 300);
+// 小包就绪 → 立刻撤掉加载弹窗与遮罩、初始化界面。只执行一次。
+let __enteredApp = false;
+function enterAppFromPartial() {
+  if (__enteredApp) return;
+  __enteredApp = true;
+  try {
+    const timer = window.__statusTimer;
+    if (timer) clearInterval(timer);
+    const dot = document.getElementById("statusDot");
+    const txt = document.getElementById("statusText");
+    if (dot) dot.className = "status-dot ok";
+    if (txt) txt.textContent = DB.cards.length + " 张";
+  } catch (e) {}
+  hideLoadingOverlay();
+  DB.enteredAt = Math.round(performance.now());
+  DB.enteredCards = DB.cards.length;
+  DB.enteredPartial = !!DB.partial;
+  try { initIndicator(); } catch (e) {}
+  try { loadSets(); } catch (e) {}
+  const activeTab = document.querySelector(".nav-tab.active");
+  if (activeTab && activeTab.dataset.tab === "preview" && !previewInitialized) {
+    initPreview();
   }
+  try { renderDeckHeroCard(); } catch (e) {}
 }
 
 // 第二阶段：全量卡库。成功后就地替换 DB.cards（同引用不同内容），
@@ -1694,6 +1700,7 @@ function loadSets() {
       subEl.textContent = "已等待 " + sec + " 秒，数据较大，请耐心等待…";
     }
   }, 400);
+  window.__statusTimer = timer;
 
   try {
     await loadCardDatabase();
@@ -1711,24 +1718,15 @@ function loadSets() {
   dot.className = "status-dot ok";
   txt.textContent = DB.cards.length + " 张";
 
-  const elapsed = Date.now() - t0;
-  if (elapsed < MIN_SHOW) {
-    await new Promise(res => setTimeout(res, MIN_SHOW - elapsed));
+  // 正常情况下小包一好就已经在 enterAppFromPartial 里进界面了；这里只兜底
+  // （比如小包路径没走成、直接等全量的老分支）。
+  if (!__enteredApp) {
+    const elapsed = Date.now() - t0;
+    if (elapsed < MIN_SHOW) {
+      await new Promise(res => setTimeout(res, MIN_SHOW - elapsed));
+    }
+    enterAppFromPartial();
   }
-  hideLoadingOverlay();
-  // 留痕：进入界面的那一刻，卡库是不是只有小包（partial）
-  DB.enteredAt = Math.round(performance.now());
-  DB.enteredCards = DB.cards.length;
-  DB.enteredPartial = !!DB.partial;
-
-  initIndicator();
-  loadSets();
-
-  const activeTab = document.querySelector(".nav-tab.active");
-  if (activeTab && activeTab.dataset.tab === "preview" && !previewInitialized) {
-    initPreview();
-  }
-  renderDeckHeroCard();
 })();
 
 // ============================================================
