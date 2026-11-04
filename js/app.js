@@ -725,6 +725,8 @@ async function loadFullCardDatabase(t0, mustAwait) {
     const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
     indexCards(list, { isFull: true });
     DB.partial = false;
+    // 全量卡库就绪 —— 此时才轮到卡组缩略图预取（在此之前一律让位给这 10 MB）
+    if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
     DB.ready = true;
     DB.error = null;
     DB.loadSeconds = (performance.now() - t0) / 1000;
@@ -6440,6 +6442,95 @@ function prefetchDeckArt() {
   renderDeckCards = function () {
     const r = orig.apply(this, arguments);
     prefetchDeckArt();
+    return r;
+  };
+})();
+
+// ============================================================
+// 卡组缩略图预取（256px 卡面）
+//
+// 背景：悬停右侧列表里的某一行时，浮层才去取 256px 卡面。
+//   直接「导入卡组」时一行都没被悬停过，于是这十几～几十张卡面
+//   全部处于「未下载」状态，之后每一次悬停都要现等一趟网络。
+//
+// 做法：卡片一旦进入右侧列表（renderDeckCards 之后），就按低优先级
+//   把它们逐张拉进浏览器 HTTP 缓存；悬停时直接命中缓存，零等待。
+//
+// 优先级纪律（用户明确要求）：10 MB 卡库优先。
+//   · DB.ready 为假 或 DB.partial 为真（此刻还在用小包跑首屏）→ 一张都不发，
+//     只挂一个 1200ms 的闹钟继续等；全量就绪时会由 loadFullCardDatabase 主动叫醒。
+//   · 就绪后每 80ms 只发 2 张、fetchPriority=low —— 不和首屏抢带宽与连接。
+//   · 同一张卡只发一次（deckThumbDone），导入/增删卡导致的重排不会重复下载。
+// ============================================================
+const deckThumbDone = new Set();
+// 必须持有 Image 的引用：不持有的话，对象可能在请求发出前就被 GC，
+// 浏览器直接取消这次加载（实测：done 计数涨了、但网络面板一条请求都没有）。
+const deckThumbHold = new Set();
+let deckThumbQueue = [];
+let deckThumbTimer = 0;
+
+function deckThumbUrlOf(card) {
+  if (!card || isNoArtType(card)) return "";
+  if (!card.id) return "";
+  const u = cardImgUrl(card, "256x");
+  return (u && u !== NO_CARD_IMG) ? u : "";
+}
+
+function collectDeckThumbs() {
+  const seen = new Set();
+  const push = function (card) {
+    const u = deckThumbUrlOf(card);
+    if (!u || seen.has(u) || deckThumbDone.has(u)) return;
+    seen.add(u);
+    deckThumbQueue.push(u);
+  };
+  deckState.cards.forEach(function (e) { if (e && e.card) push(e.card); });
+  deckState.bands.forEach(function (band) {
+    band.forEach(function (e) { const c = bandEntryCard(e); if (c) push(c); });
+  });
+}
+
+function pumpDeckThumbs() {
+  deckThumbTimer = 0;
+  // 卡库没就绪就让位：它才是首屏的关键路径，缩略图慢点无所谓
+  if (!DB.ready || DB.partial) {
+    deckThumbTimer = setTimeout(pumpDeckThumbs, 1200);
+    return;
+  }
+  let sent = 0;
+  while (deckThumbQueue.length && sent < 2) {
+    const u = deckThumbQueue.shift();
+    if (deckThumbDone.has(u)) continue;
+    deckThumbDone.add(u);
+    const img = new Image();
+    deckThumbHold.add(img);
+    const release = function () { deckThumbHold.delete(img); };
+    img.onload = release;
+    img.onerror = release;
+    img.decoding = "async";
+    try { img.fetchPriority = "low"; } catch (e) {}
+    img.src = u;
+    sent++;
+  }
+  if (deckThumbQueue.length) deckThumbTimer = setTimeout(pumpDeckThumbs, 80);
+}
+
+function scheduleDeckThumbs(delay) {
+  if (deckThumbTimer) return;
+  deckThumbTimer = setTimeout(function () {
+    deckThumbTimer = 0;
+    collectDeckThumbs();
+    pumpDeckThumbs();
+  }, typeof delay === "number" ? delay : 400);
+}
+
+(function () {
+  if (typeof renderDeckCards !== "function") return;
+  const prev = renderDeckCards;
+  renderDeckCards = function () {
+    const r = prev.apply(this, arguments);
+    // 等这一帧画完再排预取，别和列表重排抢主线程
+    scheduleDeckThumbs(400);
     return r;
   };
 })();
