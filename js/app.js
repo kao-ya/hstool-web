@@ -754,8 +754,31 @@ async function loadCardDatabase() {
   DB.loadSeconds = (performance.now() - t0) / 1000;
   loadLog("ok", "卡库小包 " + firstList.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
 
-  // 后台静默换全量：不 await，失败也不影响已经能用的首屏
-  loadFullCardDatabase(t0, false);
+  // 后台静默换全量：不 await，失败也不影响已经能用的首屏。
+  // 11 MB JSON 的下载 + JSON.parse 会占住主线程几百毫秒，所以先等首屏画出来、
+  // 浏览器空闲了再开始 —— 用户点进来的那一秒不会卡一下。
+  deferFullLoad(t0);
+}
+
+// 全量被推迟到空闲时段跑（只排一次）
+let __fullLoadScheduled = false;
+function deferFullLoad(t0) {
+  if (__fullLoadScheduled) return;
+  __fullLoadScheduled = true;
+  const go = function () { loadFullCardDatabase(t0, false); };
+  const afterPaint = function () {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(go, { timeout: 1500 });
+    } else {
+      setTimeout(go, 500);
+    }
+  };
+  // 等两帧，保证首屏（骨架/卡片）已经真的画出来
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(function () { requestAnimationFrame(afterPaint); });
+  } else {
+    setTimeout(afterPaint, 300);
+  }
 }
 
 // 第二阶段：全量卡库。成功后就地替换 DB.cards（同引用不同内容），
@@ -1693,6 +1716,10 @@ function loadSets() {
     await new Promise(res => setTimeout(res, MIN_SHOW - elapsed));
   }
   hideLoadingOverlay();
+  // 留痕：进入界面的那一刻，卡库是不是只有小包（partial）
+  DB.enteredAt = Math.round(performance.now());
+  DB.enteredCards = DB.cards.length;
+  DB.enteredPartial = !!DB.partial;
 
   initIndicator();
   loadSets();
@@ -3822,15 +3849,11 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
     // 行底图用**插画**：art.hearthstonejson.com 的 512×512 方图（无卡框、无文字），
     // 比带卡框的卡面渲染更像「官方组卡器的那条彩色横条」。
     // 取不到时逐级退回：插画 → 中文卡面 → 英文卡面 → 隐藏（让行底色透出来）。
-    bg.src = rowArtUrl(card);
+    bg.src = heroIllustrationUrl(card.id);
     bg.onerror = function() {
       const step = this.dataset.artStep || "0";
-      // 代理拿不到（这张卡没有插画）→ 退到同源代理的中文卡面
-      if (step === "0") { this.dataset.artStep = "1"; this.src = "/api/card-img?u=" + encodeURIComponent("render/latest/zhCN/256x/" + card.id + ".png"); return; }
-      // 代理整体不可用（本地 file:// 打开）→ 直连
-      if (step === "1") { this.dataset.artStep = "2"; this.src = heroIllustrationUrl(card.id); return; }
-      if (step === "2") { this.dataset.artStep = "3"; this.src = cardImgUrl(card, "256x"); return; }
-      if (step === "3") { this.dataset.artStep = "4"; this.src = enCardImgUrl(card.id, "256x"); return; }
+      if (step === "0") { this.dataset.artStep = "1"; this.src = cardImgUrl(card, "256x"); return; }
+      if (step === "1") { this.dataset.artStep = "2"; this.src = enCardImgUrl(card.id, "256x"); return; }
       this.style.display = "none";
     };
   }
@@ -4068,18 +4091,12 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
   // 原来的写法每次 mouseenter 都先 removeAttribute("src") 再设新 src，
   // 即使悬停的是同一张卡也会让图片瞬间清空重载（白闪）；
   // 配合上面 preview 的 display/opacity 切换，在列表里上下移动鼠标时就会"鬼畜"式闪烁。
-  const nextSrc = "/api/card-img?u=" + encodeURIComponent("render/latest/zhCN/256x/" + cardId + ".png");
+  const nextSrc = cardImgUrl(cardId, "256x");
   if (globalHoverImg.dataset.cardId !== String(cardId)) {
     globalHoverImg.dataset.cardId = String(cardId);
     globalHoverImg.dataset.triedEn = "";
     // 三级回退与卡牌网格 / 详情弹窗统一（见 cardImgErr）
     globalHoverImg.onerror = function() {
-      // 代理不可用（比如本地 file:// 打开）→ 退回直连
-      if (!this.dataset.directRetry) {
-        this.dataset.directRetry = "1";
-        this.src = cardImgUrl(this.dataset.cardId, "256x");
-        return;
-      }
       cardImgErr(this, this.dataset.cardId, "256x");
     };
     // 关键：先把旧位图丢掉，再挂新图。
@@ -6015,7 +6032,7 @@ const ParticleFX = (function () {
     return { sx: sx, sy: sy, sw: sw, sh: sh };
   }
 
-  function makeRow(rect, bmp, tint, idx, el) {
+  function makeRow(rect, bmp, tint, idx, el, band) {
     // rect 是「视觉」坐标（祖先有 scale(0.88)/scale(0.92)），离屏必须按 CSS 尺寸画、
     // 贴回主画布时再按视觉 rect 缩放；否则卡面的裁切窗口和 DOM 对不上，
     // 表现就是「消散时不是原矩形」「图整体往右移」。
@@ -6076,14 +6093,16 @@ const ParticleFX = (function () {
           if (px[i + 3] < 20) invisible = true;
           else color = "rgb(" + px[i] + "," + px[i + 1] + "," + px[i + 2] + ")";
         }
-        // 右下一 → 左上：右下角 n≈0（最先化），左上角 n≈1（最后化）。
-        // x 方向权重 0.6、y 方向 0.4 —— 斜带往左推进得快一点，扫过时是斜的。
-        // 噪声只给 ±0.05 的抖动，同一斜带上的格子几乎同步，不会在完整区域里留下孤立的洞。
-        const jitter = (fbm2(gx * 0.23 + idx * 3.3, gy * 0.35) - 0.5) * 0.10;
-        const base = 0.6 * (cols - 1 - gx) / cols + 0.4 * (1 - tyRow);
-        const n = Math.min(1, Math.max(0, base * 0.96 + jitter));
+        // 改成「整体一起碎」：不再有右下→左上的方向性，所有格子在一个很窄的
+        // 时间窗内（n ∈ 0.10~0.52）陆续碎掉，靠噪声成团，看起来是一整块同时炸开。
+        const noise = (fbm2(gx * 0.37 + idx * 1.7, gy * 0.41) + 1) * 0.5;
+        const n = 0.10 + noise * 0.42;
         const life = 380 + Math.random() * 260;
+        // 被列表边缘裁到的行：可见带以外的格子不派碎块（否则碎块会从列表外冒出来）
+        const cy = rect.top + (gy + 0.5) * ch * ky;
+        const noShard = !!(band && (cy < band.top - 2 || cy > band.bottom + 2));
         cells.push({
+          noShard: noShard,
           gx: gx, gy: gy, lx: gx * cw, ly: gy * ch, w: cw, h: ch,
           sx: (gx * cw) * dpr, sy: (gy * ch) * dpr, sw: (cw * dpr), sh: (ch * dpr),
           x: rect.left + (gx + 0.5) * cw * kx,
@@ -6124,7 +6143,7 @@ const ParticleFX = (function () {
   function spawnShard(p, row) {
     if (dust.length >= SHARD_CAP) return;
     // 初速向上、重力向下：先窜起来，再被拽着往下掉
-    const up = 4.2 + Math.random() * 3.6;
+    const up = 9.5 + Math.random() * 6.5;
     dust.push({
       src: row.src,
       sx: p.sx, sy: p.sy, sw: p.sw, sh: p.sh,
@@ -6132,7 +6151,7 @@ const ParticleFX = (function () {
       w: p.hw * 2, h: p.hh * 2,          // 视觉尺寸（祖先有 scale，格子已是视觉坐标）
       vx: (Math.random() - 0.5) * 2.6,   // 左右散开一点点
       vy: -up,
-      grav: 0.95 + Math.random() * 0.35,
+      grav: 0.82 + Math.random() * 0.30,
       rot: 0,
       vr: (Math.random() - 0.5) * 0.13,  // 轻微旋转，别转成风扇
       life: 1500, ttl: 1500
@@ -6161,8 +6180,7 @@ const ParticleFX = (function () {
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       if (!row.el) continue;
-      const tyRow = (typeof row.ty === "number") ? row.ty : 0.5;
-      const cut = Math.min(1, Math.max(0, (snapFront / 0.96 - 0.4 * (1 - tyRow)) / 0.6));
+      const cut = Math.min(1, Math.max(0, snapFront / 0.52));
       // 按格子宽度量化（每行约 40 格 ≈ 2.5%）：文字/水晶一格一格被切掉，与卡面边界对齐
       const cutPct = Math.round(cut * 40) / 40 * 100;
       if (row.clipPct === cutPct) continue;
@@ -6185,7 +6203,7 @@ const ParticleFX = (function () {
         cells[i] = cells[cells.length - 1];
         cells.pop();
         // 破碎：整块带走（不再抽稀——抽稀是"沙"的做法，"碎"就该块块分明）
-        if (!p.invisible) spawnShard(p, row);
+        if (!p.invisible && !p.noShard) spawnShard(p, row);
       }
       if (holes) {
         row.octx.globalCompositeOperation = "destination-out";
@@ -6203,12 +6221,19 @@ const ParticleFX = (function () {
       ctx.fillStyle = snapBg;
       ctx.fillRect(snapBox.left, snapBox.top, snapBox.width, snapBox.height);
     }
+    if (snapBox) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(snapBox.left, snapBox.top, snapBox.width, snapBox.height);
+      ctx.clip();
+    }
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       if (!row.cells.length) continue;
       ctx.drawImage(row.off, 0, 0, row.off.width, row.off.height,
         row.rect.left, row.rect.top, row.rect.width, row.rect.height);
     }
+    if (snapBox) ctx.restore();
 
     // 3) 金光：只画当前边界带
     let goldHot = null, goldWarm = null;
@@ -6328,7 +6353,16 @@ const ParticleFX = (function () {
     const ready = items.filter(function (it) {
       if (!it || !it.rect) return false;
       if (!vr) return true;
-      return it.rect.top >= vr.top - 1 && it.rect.top + it.rect.height <= vr.bottom + 1;
+      const r = it.rect;
+      // 修正：以前只收「完整落在列表内」的行，导致列表底部被限高裁掉的那一行
+      // 既不碎也不隐藏，清空后它原地留着。现在收「有交集」的行，只碎看得见的那一截。
+      if (r.top >= vr.bottom - 2) return false;
+      if (r.top + r.height <= vr.top + 2) return false;
+      const top = Math.max(r.top, vr.top);
+      const bottom = Math.min(r.top + r.height, vr.bottom);
+      if (bottom - top < 6) return false;
+      it.band = { top: top, bottom: bottom };
+      return true;
     });
     if (!ready.length) return Promise.resolve();
     // 记下侧栏底色与列表区域：消散期间侧栏要变透明并浮到 canvas 之上，
@@ -6344,7 +6378,7 @@ const ParticleFX = (function () {
     const built = new Array(ready.length);
     const donePromise = new Promise(function (res) { resolveDone = res; });
     // 兜底：卡图一个都没回来时，1.5s 后照样起播（用兜底色块），不能一直干等
-    const kick = setTimeout(function () { start(); }, 1500);
+    const kick = setTimeout(function () { start(); }, 900);
 
     function start() {
       if (started) return;
@@ -6380,13 +6414,13 @@ const ParticleFX = (function () {
         const finish = function (bmp) {
           if (settled) return;            // 幂等：超时兜底 + 真图后到，只认第一次
           settled = true;
-          built[idx] = makeRow(it.rect, bmp || null, tint, idx, it.el || null);
+          built[idx] = makeRow(it.rect, bmp || null, tint, idx, it.el || null, it.band || null);
           built[idx].el = it.el || null;
           settle(idx);
         };
         if (!it.url) { finish(null); return; }
         posterPixLoad(artProxyUrl(it.url)).then(finish).catch(function () { finish(null); });
-        setTimeout(function () { finish(null); }, 1300);
+        setTimeout(function () { finish(null); }, 800);
       })(ready[i], i);
     }
     return donePromise;
@@ -6400,7 +6434,9 @@ const ParticleFX = (function () {
       if (p.y < mn) mn = p.y;
       if (p.y > mx) mx = p.y;
     }
-    return { n: dust.length, rows: rows.length, minY: mn === 1e9 ? null : Math.round(mn), maxY: mx };
+    const withEl = rows.filter(function (r) { return !!r.el; }).length;
+    const clipSample = rows.length && rows[0].el ? (rows[0].el.style.clipPath || "none") : "no-el";
+    return { n: dust.length, rows: rows.length, minY: mn === 1e9 ? null : Math.round(mn), maxY: mx, withEl: withEl, clipSample: clipSample, front: Math.round(snapFront * 100) };
   }
 
   return { deckExplode: deckExplode, supported: supported, debug: debug };
@@ -6525,15 +6561,6 @@ function artProxyUrl(u) {
   return u;
 }
 
-// 卡组行底图（方形插画 512x/*.jpg）必须走同源代理：
-//   - 直连 art.hearthstonejson.com 时浏览器对单域名只有 6 条并发连接、每条都是冷连接，
-//     一次导入 30 张卡会排成长队，行底图长时间空着（看起来就是"图片没加载全"）；
-//   - 走 /api/card-img（同源 + 边缘缓存 1 年）后，同一张卡第二次就直接命中缓存。
-function rowArtUrl(card) {
-  if (!card || !card.id) return "";
-  return "/api/card-img?u=" + encodeURIComponent("512x/" + card.id + ".jpg");
-}
-
 let __deckArtTimer = 0;
 function prefetchDeckArt() {
   if (typeof ParticleFX === "undefined" || !ParticleFX.supported()) return;
@@ -6588,9 +6615,8 @@ let deckThumbTimer = 0;
 function deckThumbUrlOf(card) {
   if (!card || isNoArtType(card)) return "";
   if (!card.id) return "";
-  // 必须与 createDeckRow 里用的是同一个 URL —— 之前预取的是 256x 卡面、行里用的是
-  // 512x 插画，两批请求互不复用，等于白预取（导入 30 张时行底图还是要现拉）。
-  return rowArtUrl(card) || "";
+  const u = cardImgUrl(card, "256x");
+  return (u && u !== NO_CARD_IMG) ? u : "";
 }
 
 function collectDeckThumbs() {
