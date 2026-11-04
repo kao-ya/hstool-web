@@ -9,7 +9,9 @@
 // 安全：u 参数用白名单正则强校验，只允许卡面图的三段固定路径，
 // 不存在用它去请求任意地址的空间。
 
-const ALLOWED = /^render\/latest\/(?:zhCN|enUS)\/(?:256x|512x|orig)\/[A-Za-z0-9_]+\.png$/;
+// 允许两类：① render/latest/…/*.png（带卡框的卡面）② 512x|256x/*.jpg|png（方形插画）
+// 卡组行底图用的是插画（512×512 jpg），破碎效果要从这里取像素，所以必须放行。
+const ALLOWED = /^(?:render\/latest\/(?:zhCN|enUS)\/(?:256x|512x|orig)\/[A-Za-z0-9_]+\.png|(?:256x|512x)\/[A-Za-z0-9_]+\.(?:jpg|png))$/;
 const UPSTREAM = "https://art.hearthstonejson.com/v1/";
 
 function bad(status, msg) {
@@ -47,7 +49,7 @@ export async function onRequestGet(context) {
   const res = new Response(upstream.body, {
     status: 200,
     headers: {
-      "content-type": "image/png",
+      "content-type": /\.jpe?g$/i.test(u) ? "image/jpeg" : "image/png",
       "access-control-allow-origin": "*",
       // 卡图不会变，可长缓存；CF 边缘按 cf-cache-status 命中
       "cache-control": "public, max-age=31536000, immutable",

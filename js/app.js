@@ -679,8 +679,51 @@ function isDefaultView() {
 }
 
 // 第一阶段：小包 + 元数据（两者都很小），拿到就立刻出首屏
+// ============================================================
+// 【测试用·临时】左侧加载日志：显示"正在加载什么"（做完可整块删）
+// 相关代码：这里 + index.html 的 #loadLog + style.css 末段，搜索 LOADLOG 可见。
+// ============================================================
+const LOADLOG_MAX = 60;
+const loadLogItems = [];
+let loadLogList = null;
+
+function renderLoadLog() {
+  if (!loadLogList) return;
+  let html = "";
+  for (let i = 0; i < loadLogItems.length; i++) {
+    const it = loadLogItems[i];
+    html += '<li class="ll-' + it.kind + '"><b>' + it.t + '</b>' + escapeHtml(it.text) + '</li>';
+  }
+  loadLogList.innerHTML = html;
+}
+
+function loadLogInit() {
+  if (loadLogList) return;
+  loadLogList = document.getElementById("llList");
+  const box = document.getElementById("loadLog");
+  if (!box || !loadLogList) return;
+  const btn = document.getElementById("llToggle");
+  if (btn) btn.addEventListener("click", function () {
+    box.classList.toggle("collapsed");
+    btn.textContent = box.classList.contains("collapsed") ? "+" : "−";
+  });
+}
+
+function loadLog(kind, text) {
+  try {
+    loadLogInit();
+    const d = new Date();
+    const pad = function (n, w) { let v = String(n); while (v.length < w) v = "0" + v; return v; };
+    const t = pad(d.getMinutes(), 2) + ":" + pad(d.getSeconds(), 2) + "." + pad(d.getMilliseconds(), 3);
+    loadLogItems.unshift({ t: t, kind: kind || "info", text: String(text) });
+    if (loadLogItems.length > LOADLOG_MAX) loadLogItems.pop();
+    renderLoadLog();
+  } catch (e) {}
+}
+
 async function loadCardDatabase() {
   const t0 = performance.now();
+  loadLog("db", "卡库：请求小包 + meta");
   const [firstResp, metaResp] = await Promise.all([
     fetch(CARDS_FIRST_URL),
     fetch(CARDS_META_URL),
@@ -709,6 +752,7 @@ async function loadCardDatabase() {
   DB.ready = true;
   DB.error = null;
   DB.loadSeconds = (performance.now() - t0) / 1000;
+  loadLog("ok", "卡库小包 " + firstList.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
 
   // 后台静默换全量：不 await，失败也不影响已经能用的首屏
   loadFullCardDatabase(t0, false);
@@ -719,11 +763,13 @@ async function loadCardDatabase() {
 async function loadFullCardDatabase(t0, mustAwait) {
   const run = async () => {
     const t1 = performance.now();
+    loadLog("db", "卡库全量：下载 10 MB");
     const resp = await fetch(CARDS_URL);
     if (!resp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + resp.status + "）");
     const rawCards = await resp.json();
     const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
     indexCards(list, { isFull: true });
+    loadLog("ok", "卡库全量 " + list.length + " 张 / " + Math.round(performance.now() - t1) + "ms");
     DB.partial = false;
     // 全量卡库就绪 —— 此时才轮到卡组缩略图预取（在此之前一律让位给这 10 MB）
     if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
@@ -3970,6 +4016,7 @@ const globalHoverPreview = document.getElementById("globalHoverPreview");
 const globalHoverImg = document.getElementById("globalHoverImg");
 
 function showCardHoverPreview(cardId, anchorEl, mode) {
+  loadLog("hov", "悬停预览 " + cardId);
   if (!cardId || !anchorEl) return;
   // 两种用途共用一个浮层：
   //   mode 缺省 / "side" —— 组卡器列表：浮层贴在行旁边，由「悬停预览」开关控制；
@@ -4063,6 +4110,12 @@ function bindDeckHoverPreview() {
   list.dataset.hoverBound = "1";
 
   list.addEventListener("mouseover", (e) => {
+    // 悬停在 − / + / × 这些操作按钮上时不要触发预览：
+    // 那会白拉一张 256px 卡图（还盖住按钮），点删卡时完全没用。
+    if (e.target.closest(".row-actions")) {
+      if (list._hoverRow) { list._hoverRow = null; hideCardHoverPreview(); }
+      return;
+    }
     const row = e.target.closest(".deck-row[data-hover-card-id]");
     if (!row || !list.contains(row)) return;
     // 仍在同一行内移动 → 不重复处理
@@ -5926,6 +5979,32 @@ const ParticleFX = (function () {
   // 不会变成一个个圆点；推进顺序只由 x 决定（噪声只做小幅抖动），边界是一条锯齿线。
   const GRID_MAX_COLS = 150;
 
+  // 复刻 .row-bg 的取景：object-fit:cover + object-position:center 25%
+  // + transform:scale(2.2) translateX(-2%)（原点 center 30%）。
+  // 以前这里写死了「卡面 256×372」的窗口，换成方形插画后整块错位，
+  // 取到的像素落在图外 → 兜底色（金/紫纯色）—— 破碎看到纯色块就是这个原因。
+  const ROW_ZOOM = 2.2, ROW_POS_X = 0.5, ROW_POS_Y = 0.25, ROW_ORIGIN_Y = 0.30, ROW_SHIFT_X = 0.02;
+
+  function rowWindow(bw, bh, w, h) {
+    const k = Math.max(w / bw, h / bh);              // cover
+    const offX = (w - bw * k) * ROW_POS_X;
+    const offY = (h - bh * k) * ROW_POS_Y;
+    const ox = w * 0.5, oy = h * ROW_ORIGIN_Y;       // transform-origin
+    // 反推：屏幕上 [0,w]×[0,h] 对应元素坐标多少 → 再减去 translate/cover 偏移 → 源图坐标
+    let x0 = ox + (0 - ox) / ROW_ZOOM + w * ROW_SHIFT_X;
+    let x1 = ox + (w - ox) / ROW_ZOOM + w * ROW_SHIFT_X;
+    let y0 = oy + (0 - oy) / ROW_ZOOM;
+    let y1 = oy + (h - oy) / ROW_ZOOM;
+    let sx = (x0 - offX) / k, sy = (y0 - offY) / k;
+    let sw = (x1 - x0) / k, sh = (y1 - y0) / k;
+    if (sx < 0) { sw += sx; sx = 0; }
+    if (sy < 0) { sh += sy; sy = 0; }
+    if (sx + sw > bw) sw = bw - sx;
+    if (sy + sh > bh) sh = bh - sy;
+    if (!(sw > 0) || !(sh > 0)) return { sx: 0, sy: 0, sw: bw, sh: bh };
+    return { sx: sx, sy: sy, sw: sw, sh: sh };
+  }
+
   function makeRow(rect, bmp, tint, idx, el) {
     // rect 是「视觉」坐标（祖先有 scale(0.88)/scale(0.92)），离屏必须按 CSS 尺寸画、
     // 贴回主画布时再按视觉 rect 缩放；否则卡面的裁切窗口和 DOM 对不上，
@@ -5942,7 +6021,7 @@ const ParticleFX = (function () {
     octx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     if (bmp) {
-      const win = visibleWindow(bmp.width, bmp.height, cssW, cssH);
+      const win = rowWindow(bmp.width, bmp.height, cssW, cssH);
       octx.drawImage(bmp, win.sx, win.sy, win.sw, win.sh, 0, 0, cssW, cssH);
     } else {
       octx.fillStyle = tint;
@@ -5973,7 +6052,7 @@ const ParticleFX = (function () {
       const sc = document.createElement("canvas");
       sc.width = cols; sc.height = rowsN;
       const sg = sc.getContext("2d", { willReadFrequently: true });
-      const win2 = visibleWindow(bmp.width, bmp.height, cssW, cssH);
+      const win2 = rowWindow(bmp.width, bmp.height, cssW, cssH);
       sg.drawImage(bmp, win2.sx, win2.sy, win2.sw, win2.sh, 0, 0, cols, rowsN);
       try { px = sg.getImageData(0, 0, cols, rowsN).data; } catch (e) { px = null; }
     }
@@ -6522,11 +6601,8 @@ function collectDeckThumbs() {
 
 function pumpDeckThumbs() {
   deckThumbTimer = 0;
-  // 卡库没就绪就让位：它才是首屏的关键路径，缩略图慢点无所谓
-  if (!DB.ready || DB.partial) {
-    deckThumbTimer = setTimeout(pumpDeckThumbs, 1200);
-    return;
-  }
+  // 不再等 10 MB 卡库：缩略图自己就是低优先级请求（fetchPriority=low + 一次 2 张），
+  // 让浏览器按优先级自己排，没必要人为排在卡库后面（那会让空等时间变成串行）。
   let sent = 0;
   while (deckThumbQueue.length && sent < 2) {
     const u = deckThumbQueue.shift();
@@ -6539,6 +6615,7 @@ function pumpDeckThumbs() {
     img.onerror = release;
     img.decoding = "async";
     try { img.fetchPriority = "low"; } catch (e) {}
+    loadLog("img", "缩略图 " + u.replace(/^.*\//, ""));
     img.src = u;
     sent++;
   }
