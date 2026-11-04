@@ -3822,11 +3822,15 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
     // 行底图用**插画**：art.hearthstonejson.com 的 512×512 方图（无卡框、无文字），
     // 比带卡框的卡面渲染更像「官方组卡器的那条彩色横条」。
     // 取不到时逐级退回：插画 → 中文卡面 → 英文卡面 → 隐藏（让行底色透出来）。
-    bg.src = heroIllustrationUrl(card.id);
+    bg.src = rowArtUrl(card);
     bg.onerror = function() {
       const step = this.dataset.artStep || "0";
-      if (step === "0") { this.dataset.artStep = "1"; this.src = cardImgUrl(card, "256x"); return; }
-      if (step === "1") { this.dataset.artStep = "2"; this.src = enCardImgUrl(card.id, "256x"); return; }
+      // 代理拿不到（这张卡没有插画）→ 退到同源代理的中文卡面
+      if (step === "0") { this.dataset.artStep = "1"; this.src = "/api/card-img?u=" + encodeURIComponent("render/latest/zhCN/256x/" + card.id + ".png"); return; }
+      // 代理整体不可用（本地 file:// 打开）→ 直连
+      if (step === "1") { this.dataset.artStep = "2"; this.src = heroIllustrationUrl(card.id); return; }
+      if (step === "2") { this.dataset.artStep = "3"; this.src = cardImgUrl(card, "256x"); return; }
+      if (step === "3") { this.dataset.artStep = "4"; this.src = enCardImgUrl(card.id, "256x"); return; }
       this.style.display = "none";
     };
   }
@@ -4064,12 +4068,18 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
   // 原来的写法每次 mouseenter 都先 removeAttribute("src") 再设新 src，
   // 即使悬停的是同一张卡也会让图片瞬间清空重载（白闪）；
   // 配合上面 preview 的 display/opacity 切换，在列表里上下移动鼠标时就会"鬼畜"式闪烁。
-  const nextSrc = cardImgUrl(cardId, "256x");
+  const nextSrc = "/api/card-img?u=" + encodeURIComponent("render/latest/zhCN/256x/" + cardId + ".png");
   if (globalHoverImg.dataset.cardId !== String(cardId)) {
     globalHoverImg.dataset.cardId = String(cardId);
     globalHoverImg.dataset.triedEn = "";
     // 三级回退与卡牌网格 / 详情弹窗统一（见 cardImgErr）
     globalHoverImg.onerror = function() {
+      // 代理不可用（比如本地 file:// 打开）→ 退回直连
+      if (!this.dataset.directRetry) {
+        this.dataset.directRetry = "1";
+        this.src = cardImgUrl(this.dataset.cardId, "256x");
+        return;
+      }
       cardImgErr(this, this.dataset.cardId, "256x");
     };
     // 关键：先把旧位图丢掉，再挂新图。
@@ -6515,6 +6525,15 @@ function artProxyUrl(u) {
   return u;
 }
 
+// 卡组行底图（方形插画 512x/*.jpg）必须走同源代理：
+//   - 直连 art.hearthstonejson.com 时浏览器对单域名只有 6 条并发连接、每条都是冷连接，
+//     一次导入 30 张卡会排成长队，行底图长时间空着（看起来就是"图片没加载全"）；
+//   - 走 /api/card-img（同源 + 边缘缓存 1 年）后，同一张卡第二次就直接命中缓存。
+function rowArtUrl(card) {
+  if (!card || !card.id) return "";
+  return "/api/card-img?u=" + encodeURIComponent("512x/" + card.id + ".jpg");
+}
+
 let __deckArtTimer = 0;
 function prefetchDeckArt() {
   if (typeof ParticleFX === "undefined" || !ParticleFX.supported()) return;
@@ -6569,8 +6588,9 @@ let deckThumbTimer = 0;
 function deckThumbUrlOf(card) {
   if (!card || isNoArtType(card)) return "";
   if (!card.id) return "";
-  const u = cardImgUrl(card, "256x");
-  return (u && u !== NO_CARD_IMG) ? u : "";
+  // 必须与 createDeckRow 里用的是同一个 URL —— 之前预取的是 256x 卡面、行里用的是
+  // 512x 插画，两批请求互不复用，等于白预取（导入 30 张时行底图还是要现拉）。
+  return rowArtUrl(card) || "";
 }
 
 function collectDeckThumbs() {
