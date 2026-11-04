@@ -1,7 +1,8 @@
 // ============================================================
 // 纯前端数据层（替代原 Python 后端的 /api/*）
 // ------------------------------------------------------------
-// 数据来源：**官方原始 JSON**（hearthstone_cards_zhCN.json，约 10.4 MB / 36022 张）
+// 数据来源：**静态首屏包 /data/first.json**（200 张 + meta + 英雄）与**边缘索引 /api/\***
+// （筛选/排序/分页/详情在 Cloudflare Pages Functions 里算）。整包 11 MB 的原始 JSON 已不再下发。
 //   直接 fetch 原始数组，不做任何裁剪 —— 保证搜索/筛选能命中全部卡牌，
 //   包括衍生 token（树苗、变形形态、图腾、法术衍生物等）。
 //   代价：首屏需下载 10.4MB（gzip 后约 2-3MB），比裁剪版慢，但卡全。
@@ -11,8 +12,8 @@
 //   —— 这些是静态常量，不随卡牌数据变化，单独放一个小文件便于缓存复用。
 // ============================================================
 
-const CARDS_URL = "data/hearthstone_cards_zhCN.json";
-const CARDS_META_URL = "data/cards-meta.json";
+// 数据来源只有两处：静态首屏包 /data/first.json 与边缘索引 /api/*（11 MB 整包已不再下发）
+/* meta 随首屏包一起下发，不再单独请求 */
 
 // 全局卡库（加载后填充）
 const DB = {
@@ -952,30 +953,11 @@ async function loadCardDatabase() {
       loadLog("err", "服务端索引不可用，回落整包：" + e.message);
     }
   }
-  loadLog("db", "卡库：请求全量 + meta");
-  const [cardsResp, metaResp] = await Promise.all([
-    fetch(CARDS_URL),
-    fetch(CARDS_META_URL),
-  ]);
-  if (!metaResp.ok) throw new Error("加载 " + CARDS_META_URL + " 失败（HTTP " + metaResp.status + "）");
-  if (!cardsResp.ok) throw new Error("加载 " + CARDS_URL + " 失败（HTTP " + cardsResp.status + "）");
-
-  const meta = await metaResp.json();
-  applyMeta(meta);
-
-  const rawCards = await cardsResp.json();
-  const list = Array.isArray(rawCards) ? rawCards : (rawCards.cards || []);
-  indexCards(list, { isFull: true });
-  DB.partial = false;
-  DB.ready = true;
-  DB.error = null;
-  DB.loadSeconds = (performance.now() - t0) / 1000;
-  DB.fullLoadSeconds = DB.loadSeconds;
-  loadLog("ok", "卡库 " + list.length + " 张 / " + Math.round(performance.now() - t0) + "ms");
-
-  // 卡库就绪 —— 此时才轮到卡组缩略图预取
-  if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
-  scheduleNameRanks();
+  // 没有整包回落：11 MB 的 cards 文件已经不在仓库里（省一次只能靠缓存的巨大请求）。
+  // 走到这里说明静态首屏包和边缘函数都不可用 —— 大概率是网络断了，直接报错比静默降级更清楚。
+  DB.error = "卡库加载失败：/data/first.json 与 /api/boot 都不可用（检查网络后刷新）";
+  loadLog("err", DB.error);
+  throw new Error(DB.error);
 }
 
 // 整库张数：服务端模式下本地只有当前页，别把 200 当成总数
@@ -1854,7 +1836,7 @@ document.querySelectorAll('input[name="format"]').forEach(inp => {
 // 加载卡牌数据 + 主动初始化（纯前端：直接读同目录 JSON）
 // ============================================================
 function loadSets() {
-  // 纯前端版：系列分组随 cards-meta.json 一起加载，已在 DB.sets 里
+  // 系列分组随首屏包（meta）一起下发，已在 DB.sets 里
   setGroupsCache = DB.sets || [];
   if (openDimKey === "set") {
     const dim = getFilterDims().find(d => d.key === "set");
@@ -1887,7 +1869,7 @@ function loadSets() {
   } catch (e) {
     clearInterval(timer);
     subEl.textContent = "卡牌数据加载失败：" + (e.message || e) +
-      "（请确认 data/hearthstone_cards_zhCN.json 与 data/cards-meta.json 存在且可访问）";
+      "（请确认 /data/first.json 可访问、且 /api/status 返回 ready）";
     subEl.style.color = "#ef4444";
     dot.className = "status-dot err";
     txt.textContent = "加载失败";

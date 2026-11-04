@@ -17,30 +17,28 @@ concurrency:
 
 jobs:
   update:
-    # 固定 24.04，不用 ubuntu-latest：latest 会在 2026-10 之后迁到 Ubuntu 26，
-    # 到时候 python3 / git 版本突然变化，容易踩到不可预期的坑
+    # 固定 24.04，不用 ubuntu-latest：latest 会在 2026-10 之后迁到 Ubuntu 26
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      # v4 跑在 Node 20 上，已被弃用（日志里的 deprecation 警告就是它）；v5 起改用 Node 24
       - uses: actions/checkout@v6
 
       - name: 下载官方卡库
+        # 原始卡库不放在仓库里（11 MB，且只是构架索引的输入），每次现下到 /tmp
         run: |
           curl -fsSL --retry 3 --retry-delay 5 \
             -o /tmp/cards.json \
             "https://api.hearthstonejson.com/v1/latest/zhCN/cards.json"
           ls -lh /tmp/cards.json
 
-      - name: 比对并写回
+      - name: 比对指纹
         id: diff
         run: |
           python3 - <<'PY'
           import hashlib, json, os, pathlib
 
           new = json.loads(pathlib.Path("/tmp/cards.json").read_text(encoding="utf-8"))
-          dst = pathlib.Path("data/hearthstone_cards_zhCN.json")
-          old = json.loads(dst.read_text(encoding="utf-8"))
+          fp_path = pathlib.Path("data/cards-fingerprint.txt")
 
           # 只用真正影响展示的字段做指纹，避免无关字段抖动造成“假变化”
           def fp(cards):
@@ -51,27 +49,29 @@ jobs:
               )
               return hashlib.sha256(repr(key).encode()).hexdigest()
 
-          changed = "0"
-          if fp(old) != fp(new):
-              # 保持原文件的单行风格（json.dumps 默认分隔符与本地一致）
-              dst.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+          new_fp = fp(new)
+          old_fp = fp_path.read_text(encoding="utf-8").strip() if fp_path.exists() else ""
 
-              meta_p = pathlib.Path("data/cards-meta.json")
+          changed = "0"
+          if old_fp != new_fp:
+              fp_path.write_text(new_fp + "\n", encoding="utf-8")
+
+              # 总张数写进 meta.json（首屏包与边缘函数都读它）
+              meta_p = pathlib.Path("data/meta.json")
               meta = json.loads(meta_p.read_text(encoding="utf-8"))
-              meta["counts"]["total"] = len(new)
-              # cards-meta.json 原来是单行紧凑格式，必须用 separators 才不会被格式化成多行
+              meta.setdefault("counts", {})["total"] = len(new)
               meta_p.write_text(
                   json.dumps(meta, ensure_ascii=False, separators=(",", ":")),
                   encoding="utf-8",
               )
 
-              # 出现没登记过的新系列时只报警告：中文名没法自动生成，需要人工补 cards-meta.json
+              # 出现没登记过的新系列时只报警告：中文名没法自动生成，需要人工补 data/meta.json
               known = {code for group in meta["sets"] for code, _ in group["items"]}
               unknown = sorted({c.get("set", "") for c in new} - known - {""})
               if unknown:
-                  print(f"::warning::发现未登记系列：{', '.join(unknown)}，请补 data/cards-meta.json")
+                  print(f"::warning::发现未登记系列：{', '.join(unknown)}，请补 data/meta.json")
 
-              print(f"有变化：{len(old)} -> {len(new)} 张")
+              print(f"有变化：{len(new)} 张")
               changed = "1"
           else:
               print(f"无实质变化，仍是 {len(new)} 张")
@@ -80,17 +80,22 @@ jobs:
               f.write(f"changed={changed}\n")
           PY
 
-      - name: 重建服务端查询索引
-        # 卡库变了就要一起重建 data/cards-lite.json，否则边缘函数的筛选/排序还是旧数据
+      - name: 重建索引与首屏包
+        if: steps.diff.outputs.changed == '1'
+        # 卡库变了就要一起重建 data/cards-lite.json 与 data/first.json，否则前端与边缘函数用的还是旧数据
         run: |
           node --version
-          node scripts/build-index.mjs
+          CARD_SOURCE=/tmp/cards.json node scripts/build-index.mjs
 
       - name: 提交并推送
         if: steps.diff.outputs.changed == '1'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/
-          git commit -m "data: 同步卡库 $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push
+          git add data/cards-lite.json data/first.json data/meta.json data/cards-fingerprint.txt
+          if git diff --cached --quiet; then
+            echo "产物无变化，跳过提交"
+          else
+            git commit -m "data: 同步卡库 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi

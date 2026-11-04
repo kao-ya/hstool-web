@@ -160,31 +160,44 @@ php -S localhost:8000           # 需要 PHP
 │   └── wawa.png                        # 「关于」页项目图标
 ├── fonts/
 │   └── Belwe.ttf                       # 卡牌显示字体
+├── functions/                          # Cloudflare Pages Functions（边缘查询）
+│   ├── _lib/cards-db.js                # 服务端索引：筛选 / 排序 / 分页 / 详情
+│   └── api/                            # boot、cards/{search,detail,lookup,byname}、heroes、sets、status、card-img、hs-signature
+├── scripts/
+│   └── build-index.mjs                 # 从原始卡库生成索引与首屏包
+├── _routes.json                         # 只有 /api/* 走 Functions，静态资源直出
 └── data/
-    ├── hearthstone_cards_zhCN.json     # 完整卡库（36,022 张，10.9 MB）
-    └── cards-meta.json                 # 元数据（6 KB）
+    ├── first.json                      # 首屏静态包（meta + 第一页 200 张 + 11 个英雄，约 109 KB）
+    ├── cards-lite.json                 # 边缘索引（36,390 行紧凑数组，5.88 MB，只给 Functions 读）
+    ├── meta.json                       # 元数据（枚举中文映射、58 个系列分组、图床前缀）
+    └── cards-signatures.json           # 异画（签名卡图）索引，460 条
 ```
 
-无 `package.json`、无 `node_modules`、无打包产物 —— 这就是全部。
+> 原始卡库（`hearthstone_cards_zhCN.json`，11 MB）**不进仓库**：它只是构建索引的输入，
+> 由 GitHub Actions 每次现下到 `/tmp` 再跑 `scripts/build-index.mjs`。
+
+无 `package.json`、无 `node_modules`、无打包产物 —— 运行时就是这些静态文件 + 边缘函数。
 
 ---
 
 ## 📡 数据文件
 
-采用**双文件**方案，职责分离：
+首屏只下一份静态包，其余查询交给边缘函数：
 
-| 文件 | 回答的问题 | 内容 |
+| 文件 | 谁读 | 作用 |
 | --- | --- | --- |
-| `hearthstone_cards_zhCN.json` | 这张卡**是什么** | 卡牌原始数据数组，36,022 条 |
-| `cards-meta.json` | 怎么用人话**讲出来** | 枚举中文映射、58 个系列分组、图床前缀 |
+| `data/first.json` | 浏览器 | 首屏：meta + 第一页 200 张 + 11 个英雄卡（1 个静态请求，可缓存 1 小时） |
+| `data/cards-lite.json` | Functions | 全量索引，筛选/排序/分页/详情都在这里算；用户端从不下载 |
+| `data/meta.json` | Functions + 首屏包 | 枚举中文映射、58 个系列、图床前缀 |
+| `data/cards-signatures.json` | 浏览器 | 哪些卡有异画（460 条），决定详情页「看异画」按钮 |
 
-`cards-meta.json` 结构：
+`meta.json` 结构：
 
 ```jsonc
 {
   "version": 2,
   "source": "official-json",
-  "counts": { "total": 36022 },
+  "counts": { "total": 36390 },
   "sets": [ { "group": "基础与经典", "items": [["BASIC", "基础"], ...] }, ... ],  // 5 组 / 58 系列
   "maps": {                                                                       // 143 条翻译
     "class": 13, "rarity": 5, "type": 20, "set": 69, "race": 27, "spellSchool": 9
@@ -195,7 +208,7 @@ php -S localhost:8000           # 需要 PHP
 
 系列分组：基础与经典 7、冒险模式 4、正式系列 36、活动 / 特殊 8、游戏模式 3 = **58 个系列**。
 
-> 💡 出新系列时**只需改 `cards-meta.json`**，不用动一行代码。
+> 💡 出新系列时**只需改 `data/meta.json`**，不用动一行代码。
 
 ---
 
@@ -208,12 +221,16 @@ https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json   # 仅可
 https://api.hearthstonejson.com/v1/latest/zhCN/cards.json              # 全量（本项目用这个）
 ```
 
-更新步骤：
+日常不用手动做：`.github/workflows/update-cards.yml` 每 6 小时跑一次，比对指纹 →
+有变化就重建 `cards-lite.json` 与 `first.json` 并提交，CF Pages 自动重新部署。
 
-1. 下载全量 JSON，覆盖 `data/hearthstone_cards_zhCN.json`
-2. 如出现新系列，在 `data/cards-meta.json` 的 `sets` 里补上 `[代码, 中文名]`，`maps.set` 里补翻译
-3. 更新 `counts.total`
-4. 浏览器强刷（Ctrl+F5）验证张数与新卡
+手动重建（本地）：
+
+```bash
+CARD_SOURCE=/path/to/cards.json node scripts/build-index.mjs
+```
+
+新系列的中文名需要人工补进 `data/meta.json` 的 `sets` 与 `maps.set`，否则界面会显示英文代码。
 
 ---
 
@@ -258,11 +275,13 @@ https://api.hearthstonejson.com/v1/latest/zhCN/cards.json              # 全量�
 
 **首次加载为什么要等？**
 
-需下载 10.9 MB 卡库，Cloudflare Pages 默认开启 Brotli，实际传输约 1.2–1.8 MB，之后走缓存。
+首屏只下 `data/first.json`（约 109 KB，Brotli 后 ~25 KB，可缓存 1 小时），不下载 11 MB 卡库；
+搜索、筛选、排序、翻页、详情由边缘函数按需计算。
 
 **为什么搜不到某张卡？**
 
-本项目使用官方全量原始数据（含战棋 / 佣兵 / 附魔 / 英雄皮肤与全部衍生 token），正常不会漏卡。请先确认 `data/hearthstone_cards_zhCN.json` 已正确放置且未被篡改。
+本项目使用官方全量原始数据（含战棋 / 佣兵 / 附魔 / 英雄皮肤与全部衍生 token），正常不会漏卡。
+搜不到时先看 `GET /api/status` 是否 `ready:true`（索引没建起来时列表只有首屏那 200 张）。
 
 **卡组代码解不出来？**
 

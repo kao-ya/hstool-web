@@ -1,17 +1,24 @@
-// 生成服务端查询索引 data/cards-lite.json
+// 生成服务端查询索引 data/cards-lite.json + 首屏静态包 data/first.json
 // 计数口径与前端 js/app.js 的 isCollectible / 名称名次 / 附属卡规则逐条对齐。
 // 行格式（数组，比对象省约 60% 体积）：见 FIELDS
 //
 // 用法（仓库根目录）：node scripts/build-index.mjs
+// 原始卡库不放在仓库里（11 MB），用环境变量指过去：
+//   CARD_SOURCE=/tmp/cards.json node scripts/build-index.mjs
 import fs from "fs";
 import path from "path";
 
 const ROOT = process.cwd();
 const DATA = path.join(ROOT, "data");
+const CARD_SOURCE = process.env.CARD_SOURCE || path.join(DATA, "hearthstone_cards_zhCN.json");
+if (!fs.existsSync(CARD_SOURCE)) {
+  console.error("找不到原始卡库：" + CARD_SOURCE + "（用 CARD_SOURCE=<路径> 指定）");
+  process.exit(1);
+}
 
-const raw = JSON.parse(fs.readFileSync(path.join(DATA, "hearthstone_cards_zhCN.json"), "utf8"));
+const raw = JSON.parse(fs.readFileSync(CARD_SOURCE, "utf8"));
 const list = Array.isArray(raw) ? raw : raw.cards;
-const meta = JSON.parse(fs.readFileSync(path.join(DATA, "cards-meta.json"), "utf8"));
+const meta = JSON.parse(fs.readFileSync(path.join(DATA, "meta.json"), "utf8"));
 
 const COLLECTIBLE_TYPES = new Set(["MINION", "SPELL", "HERO", "WEAPON", "LOCATION"]);
 const isCollectibleRaw = (c) => {
