@@ -6187,29 +6187,11 @@ const ParticleFX = (function () {
     // 2) 整帧重绘：清屏 → 铺一层侧栏底色（消散期间 .deck-sidebar 是透明的，
     //    不铺的话行与行之间那几像素缝隙会漏出页面背景）→ 逐行贴图
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (snapBg && snapBox) {
+    if (snapBg && snapBox && rows.length) {
+      // 消散期间 .deck-sidebar 是透明的，不铺的话行缝里会漏出页面背景图。
+      // 行的 DOM 压在 canvas 之上，所以整块铺不会把还没画上 canvas 的行盖白。
       ctx.fillStyle = snapBg;
-      // 只铺「行与行之间的缝」和左右内边距，不整块铺：
-      // 还没被画进 canvas 的那些行，卡面还是靠 DOM 里的 img 撑着；
-      // 整块铺会把它们盖成一片空白（看起来就是清空瞬间列表先白了一下）。
-      const bx = snapBox.left, by = snapBox.top, bw = snapBox.width, bh = snapBox.height;
-      const rs = (snapRects && snapRects.length) ? snapRects.slice().sort(function (a, b) { return a.top - b.top; }) : null;
-      if (!rs) {
-        ctx.fillRect(bx, by, bw, bh);
-      } else {
-        let y = by;
-        for (let i = 0; i < rs.length; i++) {
-          const r = rs[i];
-          if (r.top > y) ctx.fillRect(bx, y, bw, r.top - y);
-          const rt = Math.max(y, r.top), rb = r.top + r.height;
-          // 左右各 3px 内边距（行比列表窄）
-          if (r.left > bx) ctx.fillRect(bx, rt, r.left - bx, rb - rt);
-          const rowRight = r.left + r.width, boxRight = bx + bw;
-          if (boxRight > rowRight) ctx.fillRect(rowRight, rt, boxRight - rowRight, rb - rt);
-          y = Math.max(y, rb);
-        }
-        if (by + bh > y) ctx.fillRect(bx, y, bw, by + bh - y);
-      }
+      ctx.fillRect(snapBox.left, snapBox.top, snapBox.width, snapBox.height);
     }
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
@@ -6277,6 +6259,12 @@ const ParticleFX = (function () {
     }
     // 纸面全部化完（约 1.15s）就先通知清空流程重建列表；剩最后一缕灰让它自己飞完，
     // 不必等到 2s+ 才让侧栏收起来。
+    if (!rows.length && document.body.classList.contains("fx-snapping")) {
+      // 卡面全部化完：立刻把侧栏底色与层级交还给 DOM，空列表区域不会再挂着一块
+      // canvas 画的深色方块（那看起来就是"卡碎了但阴影还在"）。碎块继续在上面飞完。
+      document.body.classList.remove("fx-snapping");
+      snapBg = null;
+    }
     if (!rows.length && resolveDone) { const d = resolveDone; resolveDone = null; d(); }
 
     if (rows.length || dust.length) {
