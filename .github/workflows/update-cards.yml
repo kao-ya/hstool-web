@@ -80,6 +80,12 @@ jobs:
               f.write(f"changed={changed}\n")
           PY
 
+      - name: 重建服务端查询索引
+        # 卡库变了就要一起重建 data/cards-lite.json，否则边缘函数的筛选/排序还是旧数据
+        run: |
+          node --version
+          node scripts/build-index.mjs
+
       - name: 提交并推送
         if: steps.diff.outputs.changed == '1'
         run: |

@@ -28,6 +28,10 @@ const DB = {
   maps: {},           // class/rarity/type/set/race/spellSchool 中文映射
   imageBase: {},
   sets: [],
+  // ---- 服务端索引模式（B 方案）----
+  remote: false,        // true = 索引在边缘函数，DB.cards 只有当前页
+  declaredTotal: 0,     // 服务端报告的总张数
+  extra: new Map(),     // dbfId -> card：临时补进来的、不在当前页的卡（导入卡组/附属卡用）
 };
 
 // ------------------------------------------------------------
@@ -243,14 +247,19 @@ function lookupToken(token) {
   if (!t) return null;
   if (/^\d+$/.test(t)) {
     const n = parseInt(t, 10);
-    return DB.byDbf.has(n) ? n : null;
+    return (DB.byDbf.has(n) || DB.extra.has(n)) ? n : null;
   }
   const dbf = extractDbfId(t);
-  if (dbf !== null) return DB.byDbf.has(dbf) ? dbf : null;
+  if (dbf !== null) return (DB.byDbf.has(dbf) || DB.extra.has(dbf)) ? dbf : null;
   // 按卡名查（去掉 "(DBF xxx)" 尾巴）
   const name = t.replace(/\(DBF\s*\d+\)/i, "").trim();
   const c = DB.byName.get(name);
-  return c ? c.dbfId : null;
+  if (c) return c.dbfId;
+  // 服务端只下发一页：后补进来的卡可能还没进 byName
+  for (const extra of DB.extra.values()) {
+    if (extra.name === name) return extra.dbfId;
+  }
+  return null;
 }
 
 function parseHeroes(raw) {
@@ -289,7 +298,10 @@ function parseCards(raw) {
 // ------------------------------------------------------------
 // 显示辅助
 // ------------------------------------------------------------
-function cardByDbf(dbf) { return DB.byDbf.get(Number(dbf)); }
+function cardByDbf(dbf) {
+  const n = Number(dbf);
+  return DB.byDbf.get(n) || DB.extra.get(n);
+}
 
 function displayDbf(dbf) {
   const c = cardByDbf(dbf);
@@ -477,6 +489,8 @@ function cardDetail(dbfId) {
 // ------------------------------------------------------------
 async function api(path, data) {
   data = data || {};
+  // 搜索/详情/状态/英雄/系列：服务端有索引时交给边缘算（结果与本地实现逐条一致）
+  if (DB.remote && REMOTE_API[path]) return remoteCall(path, data);
   switch (path) {
     case "/api/status":
       return {
@@ -496,6 +510,11 @@ async function api(path, data) {
       const content = (data.content || "").trim();
       if (!content) throw new Error("请先粘贴卡组代码或官方格式文本。");
       const info = decodeFromContent(content);
+      // 服务端模式下卡库只有当前页，解码结果里的卡可能不在里面，先补齐再出文本
+      await ensureCardsByIds(
+        [].concat(info.hero_dbf || [], (info.cards || []).map(function (x) { return x[0]; }),
+          (info.sideboard || []).reduce(function (a, t) { return a.concat([t[0], t[t.length - 1]]); }, []))
+      );
       return {
         text: formatDecoded(info),
         heroes_lines: info.hero_dbf.map(h => displayDbf(h)).join("\n"),
@@ -505,6 +524,8 @@ async function api(path, data) {
       };
     }
     case "/api/encode": {
+      await ensureCardsByNames(extractNameList([data.heroes, data.cards]));
+      await ensureCardsByIds(extractIdList([data.heroes, data.cards, JSON.stringify(data.sideboard || "")]));
       const heroes = parseHeroes(data.heroes || "");
       const cards = parseCards(data.cards || "");
       const fmt = parseInt(data.format || 1, 10);
@@ -520,6 +541,8 @@ async function api(path, data) {
       return { text: encodeDeckstring(heroes, cards, fmt, undefined, sideboard.length ? sideboard : null) };
     }
     case "/api/export": {
+      await ensureCardsByNames(extractNameList([data.heroes, data.cards]));
+      await ensureCardsByIds(extractIdList([data.heroes, data.cards, JSON.stringify(data.sideboard || "")]));
       const heroes = parseHeroes(data.heroes || "");
       const cards = parseCards(data.cards || "");
       const fmt = parseInt(data.format || 1, 10);
@@ -608,8 +631,10 @@ function normalizeCard(c) {
   }
   o.races = races;
   o.race = c.race || "";
-  // 原始 JSON 没有 attached_dbf（奇闻附属），改为按 id 前缀在建立索引后补齐。
-  o.attached_dbf = [];
+  // 原始 JSON 没有 attached_dbf（奇闻附属）。全量模式下由 indexCards 按 id 前缀补齐；
+  // 服务端模式下索引已算好，直接随记录下发，这里接住即可。
+  o.attached_dbf = Array.isArray(c.attached_dbf) ? c.attached_dbf
+    : (Array.isArray(c.attached) ? c.attached : []);
   return o;
 }
 
@@ -720,8 +745,186 @@ function loadLog(kind, text) {
   } catch (e) {}
 }
 
+// ---- 服务端索引模式（B 方案）----
+// 需要发给服务端计算的接口：只这几个，编解码/导出仍是纯本地（不走网络）。
+const REMOTE_API = {
+  "/api/cards/search": "/api/cards/search",
+  "/api/cards/detail": "/api/cards/detail",
+  "/api/cards/lookup": "/api/cards/lookup",
+  "/api/cards/byname": "/api/cards/byname",
+  "/api/status": "/api/status",
+  "/api/heroes": "/api/heroes",
+  "/api/sets": "/api/sets",
+};
+
+async function remoteCall(path, data) {
+  const url = REMOTE_API[path] || path;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(data || {}),
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    let msg = "HTTP " + r.status;
+    try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || "服务端返回错误");
+  return j.result;
+}
+
+// 把一堆 dbfId / cardId 合并成一次请求：25ms 内攒起来的 id 一起发，避免首屏几十个往返
+const __lookupWaiters = [];
+let __lookupKeys = new Set();
+let __lookupTimer = 0;
+
+function lookupBatch(keys) {
+  return new Promise(function (resolve) {
+    for (const k of keys) __lookupKeys.add(String(k));
+    __lookupWaiters.push(resolve);
+    if (__lookupTimer) return;
+    __lookupTimer = setTimeout(async function () {
+      __lookupTimer = 0;
+      const all = Array.from(__lookupKeys);
+      const waiters = __lookupWaiters.splice(0);
+      __lookupKeys = new Set();
+      let cards = [];
+      try {
+        const r = await remoteCall("/api/cards/lookup", { ids: all });
+        cards = r.cards || [];
+      } catch (e) {
+        loadLog("err", "批量取卡失败：" + e.message);
+      }
+      for (const c of cards) {
+        const nc = normalizeCard(c);
+        DB.extra.set(nc.dbfId, nc);
+        if (nc.id) DB.byId.set(nc.id, nc);
+        if (nc.name && !DB.byName.has(nc.name)) DB.byName.set(nc.name, nc);
+        if (c.id) cardCache.set(nc.dbfId, nc);
+      }
+      for (const w of waiters) w(cards);
+    }, 25);
+  });
+}
+
+// 从编解码输入里抠卡名（"鱼人杀手蟹 × 2" / "鱼人杀手蟹(DBF 443) × 2" 都适用）
+function extractNameList(parts) {
+  const out = [];
+  for (const part of parts || []) {
+    const text = part == null ? "" : String(part);
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const name = line.replace(/\(DBF\s*\d+\)/i, "").replace(/\s*[×xX*]\s*\d+\s*$/, "").trim();
+      if (!name || /^\d+$/.test(name)) continue;
+      if (out.indexOf(name) < 0) out.push(name);
+    }
+  }
+  return out;
+}
+
+// 按名字批量补卡：服务端只下发一页，页外的卡名前端查不到
+async function ensureCardsByNames(names) {
+  if (!DB.remote) return;
+  const miss = [];
+  for (const name of (names || [])) {
+    if (!name || DB.byName.has(name)) continue;
+    if (miss.indexOf(name) < 0) miss.push(name);
+  }
+  if (!miss.length) return;
+  try {
+    const r = await remoteCall("/api/cards/byname", { names: miss.slice(0, 80) });
+    for (const c of (r.cards || [])) {
+      const nc = normalizeCard(c);
+      DB.extra.set(nc.dbfId, nc);
+      if (nc.id) DB.byId.set(nc.id, nc);
+      if (nc.name) DB.byName.set(nc.name, nc);
+      cardCache.set(nc.dbfId, nc);
+    }
+  } catch (e) {
+    loadLog("err", "按名取卡失败：" + e.message);
+  }
+}
+
+// 从任意文本里抠出 dbfId（"46998 × 2" / "7" / 卡组文本都适用）
+function extractIdList(parts) {
+  const text = (parts || []).map(function (x) { return x == null ? "" : String(x); }).join(" ");
+  const out = [];
+  const m = text.match(/\d{1,7}/g) || [];
+  for (const raw of m) {
+    const n = parseInt(raw, 10);
+    if (n > 0 && out.indexOf(n) < 0) out.push(n);
+  }
+  return out;
+}
+
+// 一次请求补多个 cardId 的卡（HERO_08、TOY_330t94…）
+async function ensureCardsByCardIds(cardIds) {
+  if (!DB.remote) return;
+  const miss = [];
+  for (const cid of (cardIds || [])) {
+    if (!cid) continue;
+    const hit = DB.byId.get(cid) || DB.extra.get(cid);
+    if (!hit && miss.indexOf(cid) < 0) miss.push(cid);
+  }
+  if (!miss.length) return;
+  await lookupBatch(miss);
+}
+
+// 把「不在当前页」的卡补进内存：导入卡组、编解码、附属卡都要按 dbfId 反查卡面。
+async function ensureCardsByIds(ids) {
+  if (!DB.remote) return;
+  const miss = [];
+  for (const raw of (ids || [])) {
+    const n = Number(raw);
+    if (!n || DB.byDbf.has(n) || DB.extra.has(n) || miss.indexOf(n) >= 0) continue;
+    miss.push(n);
+  }
+  if (!miss.length) return;
+  await lookupBatch(miss.slice(0, 500));
+}
+
 async function loadCardDatabase() {
   const t0 = performance.now();
+  // 服务端索引优先：一次只拿一页，11 MB 的整包永远不下发。
+  // 失败（本地没起 Functions、边缘挂了）就退回整包，功能不受影响。
+  if (window.__REMOTE_DB__ !== false) {
+    loadLog("db", "服务端索引：请求首屏一页 + meta");
+    try {
+      const r = await fetch("/api/boot", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "boot 失败");
+      const boot = j.result;
+      applyMeta(boot.meta);
+      indexCards(boot.cards, { isFull: false });
+      DB.remote = true;
+      DB.declaredTotal = boot.total;
+      DB.partial = false;
+      DB.ready = true;
+      DB.error = null;
+      DB.loadSeconds = (performance.now() - t0) / 1000;
+      DB.fullLoadSeconds = DB.loadSeconds;
+      loadLog("ok", "服务端模式：首屏 " + boot.cards.length + " 张 / 共 " + boot.total +
+        " · " + Math.round(performance.now() - t0) + "ms");
+      if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
+      scheduleNameRanks();
+      // 英雄选择器只认 HERO_LIST 里的这 11 个 dbfId，页面上不等于当前页，得单独补
+      try {
+        const heroDbfs = HERO_LIST.map(function (h) { return h.dbfId; }).filter(function (v) { return v !== null && v !== undefined; });
+        await ensureCardsByIds(heroDbfs);
+        await ensureCardsByCardIds(HERO_LIST.map(function (h) { return h.cardId; }).filter(Boolean));
+        if (typeof renderHeroGrid === "function") renderHeroGrid();
+      } catch (e) {
+        loadLog("err", "英雄卡补齐失败：" + e.message);
+      }
+      return;
+    } catch (e) {
+      loadLog("err", "服务端索引不可用，回落整包：" + e.message);
+    }
+  }
   loadLog("db", "卡库：请求全量 + meta");
   const [cardsResp, metaResp] = await Promise.all([
     fetch(CARDS_URL),
@@ -748,6 +951,12 @@ async function loadCardDatabase() {
   scheduleNameRanks();
 }
 
+// 整库张数：服务端模式下本地只有当前页，别把 200 当成总数
+function catalogSize() {
+  if (DB.remote) return DB.declaredTotal || DB.cards.length;
+  return DB.cards.length;
+}
+
 // 卡库就绪 → 撤掉加载弹窗与遮罩、初始化界面。只执行一次。
 let __enteredApp = false;
 function enterAppFromPartial() {
@@ -759,7 +968,7 @@ function enterAppFromPartial() {
     const dot = document.getElementById("statusDot");
     const txt = document.getElementById("statusText");
     if (dot) dot.className = "status-dot ok";
-    if (txt) txt.textContent = DB.cards.length + " 张";
+    if (txt) txt.textContent = catalogSize() + " 张";
   } catch (e) {}
   hideLoadingOverlay();
   DB.enteredAt = Math.round(performance.now());
@@ -1660,7 +1869,7 @@ function loadSets() {
 
   clearInterval(timer);
   dot.className = "status-dot ok";
-  txt.textContent = DB.cards.length + " 张";
+  txt.textContent = catalogSize() + " 张";
 
   // 进界面（enterAppFromPartial 只执行一次，这里调用是唯一入口）。
   if (!__enteredApp) {
@@ -3167,6 +3376,8 @@ async function showCardDetail(dbfId) {
     const c = await api("/api/cards/detail", { dbfId });
     if (seq !== detailSeq) return;
     cardCache.set(c.dbfId, c);
+    // 附属卡（奇闻/奇利亚斯模块/尤朵拉宝藏）不在当前页时先补齐，否则详情里是空的
+    await ensureCardsByIds(c.attached_dbf || []);
     renderDetail(c);
     // 先看索引（快、离线可用），索引没收录或想让结果更可信时，再探测一次真实图。
     loadSignatureIndex().then(function () {
@@ -3196,6 +3407,15 @@ const SPECIAL_ATTACHED = {
 async function fetchCardByCardId(cardId) {
   for (const c of cardCache.values()) {
     if (c.id === cardId) return c;
+  }
+  // 服务端模式：按 cardId 精确批量取（不发模糊搜索，也不会触发几十个往返）
+  if (DB.remote) {
+    const cached = DB.byId.get(cardId) || DB.extra.get(cardId);
+    if (cached) { cardCache.set(cached.dbfId, cached); return cached; }
+    const got = await lookupBatch([cardId]);
+    const exact = (got || []).find(function (c) { return c.id === cardId; });
+    if (exact) return normalizeCard(exact);
+    return null;
   }
   try {
     const r = await api("/api/cards/search", { query: cardId, filters: {}, offset: 0, limit: 5 });
