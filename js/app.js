@@ -5921,7 +5921,7 @@ const ParticleFX = (function () {
   }
   function winsafe(v, max) { return Math.max(1, Math.min(v, max)); }
 
-  const CELL = 6;
+  const CELL = 18;   // 破碎：格子就是碎块的大小，18px 才是"方块"而不是"沙粒"
   // 从右到左整列消融：擦掉的是「矩形格子」而不是圆洞，所以没化到的部分保持完整原样，
   // 不会变成一个个圆点；推进顺序只由 x 决定（噪声只做小幅抖动），边界是一条锯齿线。
   const GRID_MAX_COLS = 150;
@@ -5948,6 +5948,13 @@ const ParticleFX = (function () {
       octx.fillStyle = tint;
       octx.fillRect(0, 0, cssW, cssH);
     }
+
+    // 再复制一份「干净的」原图：off 会被逐格擦掉，而飞出去的碎块还得从原图取像。
+    // 直接给碎块各复制一张小画布太费（一屏几百个），共用这一张、按源矩形取样最省。
+    const src = document.createElement("canvas");
+    src.width = off.width;
+    src.height = off.height;
+    src.getContext("2d").drawImage(off, 0, 0);
 
     // 这一行在「整个列表」里的垂直位置（0 = 列表顶部，1 = 列表底部）。
     // 对角线消散要靠它：列表底部的行先化，顶部最后化。
@@ -5989,6 +5996,7 @@ const ParticleFX = (function () {
         const life = 380 + Math.random() * 260;
         cells.push({
           gx: gx, gy: gy, lx: gx * cw, ly: gy * ch, w: cw, h: ch,
+          sx: (gx * cw) * dpr, sy: (gy * ch) * dpr, sw: (cw * dpr), sh: (ch * dpr),
           x: rect.left + (gx + 0.5) * cw * kx,
           y: rect.top + (gy + 0.5) * ch * ky,
           hw: (cw * kx) / 2, hh: (ch * ky) / 2,
@@ -5999,7 +6007,7 @@ const ParticleFX = (function () {
         });
       }
     }
-    return { rect: rect, off: off, octx: octx, cells: cells, kx: kx, ky: ky, ty: tyRow };
+    return { rect: rect, off: off, src: src, octx: octx, cells: cells, kx: kx, ky: ky, ty: tyRow };
   }
 
   // 每帧给几千个灰画 arc 太贵（fps 62→46）。改成预渲染的圆形贴图，绘制时只做 drawImage。
@@ -6021,14 +6029,24 @@ const ParticleFX = (function () {
     return c;
   }
 
-  function spawnDust(p) {
+  // 碎块上限：再多就掉帧（每个碎块都是一次 drawImage）
+  const SHARD_CAP = 600;
+
+  function spawnShard(p, row) {
+    if (dust.length >= SHARD_CAP) return;
+    // 初速向上、重力向下：先窜起来，再被拽着往下掉
+    const up = 4.2 + Math.random() * 3.6;
     dust.push({
-      x: p.x, y: p.y, w: p.w, h: p.h, r: p.r * 1.18, color: p.color,
-      vx: 2.8 + Math.random() * 4.6,      // 风从左往右吹
-      vy: -1.5 + Math.random() * 2.0,
-      grav: 0.05, drag: 0.995,
-      life: p.ttl, ttl: p.ttl, fade: p.fade,
-      scale0: 1, scale: 1, alpha: 1
+      src: row.src,
+      sx: p.sx, sy: p.sy, sw: p.sw, sh: p.sh,
+      x: p.x, y: p.y,
+      w: p.hw * 2, h: p.hh * 2,          // 视觉尺寸（祖先有 scale，格子已是视觉坐标）
+      vx: (Math.random() - 0.5) * 2.6,   // 左右散开一点点
+      vy: -up,
+      grav: 0.95 + Math.random() * 0.35,
+      rot: 0,
+      vr: (Math.random() - 0.5) * 0.13,  // 轻微旋转，别转成风扇
+      life: 1500, ttl: 1500
     });
   }
 
@@ -6077,10 +6095,8 @@ const ParticleFX = (function () {
         holes.rect(p.lx - 0.5, p.ly - 0.5, p.w + 1, p.h + 1);
         cells[i] = cells[cells.length - 1];
         cells.pop();
-        if (p.invisible) continue;
-        // 灰只从一小部分格子里起飞（约 1/5），"粒子更少"就靠这个
-        if (Math.random() > (dustStep > 1 ? 0.1 : 0.2)) continue;
-        spawnDust(p);
+        // 破碎：整块带走（不再抽稀——抽稀是"沙"的做法，"碎"就该块块分明）
+        if (!p.invisible) spawnShard(p, row);
       }
       if (holes) {
         row.octx.globalCompositeOperation = "destination-out";
@@ -6145,22 +6161,25 @@ const ParticleFX = (function () {
     if (goldWarm) { ctx.fillStyle = "rgba(255,198,110,0.72)"; ctx.fill(goldWarm); }
     if (goldHot) { ctx.fillStyle = "rgba(255,247,222,0.95)"; ctx.fill(goldHot); }
 
-    // 4) 灰：向右飞
+    // 4) 碎块：先向上飞，再往下掉（重力 > 初速，抛物线感）
     const keepDust = [];
     for (let i = 0; i < dust.length; i++) {
       const p = dust[i];
       p.life -= dt;
-      if (p.life <= 0) continue;
+      // 飞出屏幕下方或寿命到了就回收
+      if (p.life <= 0 || p.y - p.h > window.innerHeight + 60) continue;
       p.vy += p.grav * k;
-      const d = Math.pow(p.drag, k);
-      p.vx *= d; p.vy *= d;
+      p.vx *= Math.pow(0.997, k);
       p.x += p.vx * k;
       p.y += p.vy * k;
-      p.scale = p.scale0 * (0.28 + 0.72 * (p.life / p.ttl));
-      p.alpha = Math.min(1, p.life / p.fade);
-      ctx.globalAlpha = p.alpha;
-      const rr = Math.max(0.8, p.r * p.scale);
-      ctx.drawImage(dustSprite(p.color), p.x - rr, p.y - rr, rr * 2, rr * 2);
+      p.rot += p.vr * k;
+      const a = Math.min(1, p.life / 420);   // 最后 0.42s 淡出，避免硬消失
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(p.x, p.y);
+      if (p.rot) ctx.rotate(p.rot);
+      ctx.drawImage(p.src, p.sx, p.sy, p.sw, p.sh, -p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
       keepDust.push(p);
     }
     ctx.globalAlpha = 1;
@@ -6296,7 +6315,18 @@ const ParticleFX = (function () {
     return donePromise;
   }
 
-  return { deckExplode: deckExplode, supported: supported };
+  // 调试用：给自动化测试看碎块数量与纵向范围（不参与业务逻辑）
+  function debug() {
+    let mn = 1e9, mx = -1;
+    for (let i = 0; i < dust.length; i++) {
+      const p = dust[i];
+      if (p.y < mn) mn = p.y;
+      if (p.y > mx) mx = p.y;
+    }
+    return { n: dust.length, rows: rows.length, minY: mn === 1e9 ? null : Math.round(mn), maxY: mx };
+  }
+
+  return { deckExplode: deckExplode, supported: supported, debug: debug };
 })();
 
 // ============================================================
