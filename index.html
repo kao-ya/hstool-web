@@ -242,6 +242,7 @@
     <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="设置分类">
       <div class="settings-tab-indicator" id="settingsTabIndicator"></div>
       <button class="settings-tab active" data-stab="settings" role="tab" aria-selected="true">设置</button>
+      <button class="settings-tab" data-stab="log" role="tab" aria-selected="false">日志</button>
       <button class="settings-tab" data-stab="about" role="tab" aria-selected="false">关于</button>
     </div>
 
@@ -259,17 +260,6 @@
           </div>
           <label class="md3-switch">
             <input type="checkbox" data-setting="hoverPreview">
-            <span class="md3-switch-track"></span>
-          </label>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-label">
-            <span class="settings-row-title">加入卡组动画</span>
-            <span class="settings-row-desc">加卡时卡面从卡牌库飞入卡组列表（与官方组卡器一致）</span>
-          </div>
-          <label class="md3-switch">
-            <input type="checkbox" data-setting="cardFlyAnim">
             <span class="md3-switch-track"></span>
           </label>
         </div>
@@ -402,6 +392,32 @@
       </div><!-- /stab-settings -->
 
       <!-- ② 关于：项目信息 -->
+      <!-- ③ 日志：加载日志开关（调试用） -->
+      <div class="settings-pane hidden" id="stab-log" role="tabpanel">
+
+        <div class="settings-group-title">调试</div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">显示加载日志</span>
+            <span class="settings-row-desc">左下角浮层记录卡库加载、分享、链接导入的每一步；关掉即隐藏</span>
+          </div>
+          <label class="md3-switch">
+            <input type="checkbox" data-setting="loadLog">
+            <span class="md3-switch-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <span class="settings-row-title">清空日志内容</span>
+            <span class="settings-row-desc">只清空已记录的条目，不影响上面的开关</span>
+          </div>
+          <button class="btn btn-outline" type="button" onclick="clearLoadLog()" style="min-width:74px;justify-content:center;">清空</button>
+        </div>
+
+      </div>
+
       <div class="settings-pane hidden" id="stab-about" role="tabpanel">
 
         <div class="about-head">

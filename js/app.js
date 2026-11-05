@@ -1252,7 +1252,6 @@ function addCardToBand(card, ownerDbfId) {
   updateDeckBadge();          // 乐队卡同样消耗粉尘，加入后必须立即刷新粉尘数
   updateBandModeHint();
   renderDeckCards();
-  playDeckFlyAnim(card);
   toast("已加入乐队：" + card.name);
 }
 
@@ -1296,8 +1295,8 @@ const SETTINGS_KEY = "hstool-settings";
 const DEFAULT_SETTINGS = {
   // —— 功能 ——
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
-  cardFlyAnim:        true,   // 加入卡组飞入动画（OFF = 加卡时不做飞行动画）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
+  loadLog:            true,   // 显示加载日志浮层（调试用，可在设置→日志里关掉）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
   compactMode:        false,  // 紧凑布局
@@ -1368,6 +1367,9 @@ function applySettings() {
   b.classList.toggle("force-reduce-motion", settings.reduceMotion);
   // 关闭「水晶颜色」时，所有法力水晶统一回退到基准蓝色（见 CSS .crystal-mono）
   b.classList.toggle("crystal-mono", !settings.crystalColor);
+  // 加载日志浮层：OFF 时整块隐藏（日志仍记录在内存里，重新打开就能看到历史）
+  const logBox = document.getElementById("loadLog");
+  if (logBox) logBox.style.display = settings.loadLog ? "" : "none";
   applyBgVisibility(settings.bgVisibility);
   saveSettings();
 }
@@ -3350,102 +3352,6 @@ document.getElementById("detailModal").addEventListener("click", (e) => {
 // ============================================================
 // 组卡器
 // ============================================================
-// ============================================================
-// 加入卡组的飞入动画（对标官方组卡器：卡面从卡牌库飞到卡组列表）
-// 设置里可关：设置 → 功能 → 加入卡组动画
-// ============================================================
-// 记住「这次加卡是从哪张卡发起的」：pointerdown 时抓最近的卡片节点，
-// 网格「+」按钮、卡牌详情里的加卡按钮都能拿到起点。
-let _flySourceEl = null;
-document.addEventListener("pointerdown", function (e) {
-  const t = e.target;
-  _flySourceEl = (t && t.closest) ? t.closest(".card-item, .card-detail-card, .deck-row") : null;
-}, true);
-
-function playDeckFlyAnim(card) {
-  if (!card || !settings.cardFlyAnim) return;
-  if (document.body.classList.contains("force-reduce-motion")) return;
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const src = _flySourceEl;
-  if (!src || !src.getBoundingClientRect || !document.body.contains(src)) return;
-  let row = null;
-  try {
-    row = document.querySelector('.deck-row[data-card-id="' + String(card.id).replace(/["\\]/g, "") + '"]');
-  } catch (e) { row = null; }
-  if (!row) return;
-  const a = src.getBoundingClientRect();
-  const b = row.getBoundingClientRect();
-  if (a.width < 8 || a.height < 8 || b.width < 8 || b.height < 8) return;
-
-  // 飞的是「条形卡」：直接克隆目标行（底图 + 法力水晶 + 名称 + 份数一起飞）
-  const el = row.cloneNode(true);
-  el.className = "deck-row fly-strip";
-  el.removeAttribute("data-card-id");
-  el.removeAttribute("data-hover-card-id");
-  const acts = el.querySelector(".row-actions");
-  if (acts) acts.parentNode.removeChild(acts);
-  el.style.width = b.width + "px";
-  el.style.height = b.height + "px";
-  const startLeft = a.left + a.width / 2 - b.width / 2;
-  const startTop = a.top + a.height / 2 - b.height / 2;
-  el.style.left = startLeft + "px";
-  el.style.top = startTop + "px";
-  el.style.visibility = "visible";   // 克隆体必须显式可见，否则跟着藏行一起看不见
-
-  // 落点那一行再藏起来（visibility 不改变布局，上面算的 rect 依然有效）：
-  // renderDeckCards() 到 playDeckFlyAnim() 是同一个任务内，浏览器还没绘制，
-  // 所以藏在这里就不会出现「卡还没飞过去，列表里已经先冒出来」。
-  const prevVis = row.style.visibility;
-  row.style.visibility = "hidden";
-
-  // 条带底图可能还没下载完（这一行刚渲染），用「点下去那张卡」的图兜底，
-  // 保证飞的全程都有图像，而不是一条空条带。
-  const stripBg = el.querySelector(".row-bg");
-  if (stripBg) {
-    stripBg.loading = "eager";
-    stripBg.decoding = "sync";
-  }
-  const srcImg = src.querySelector ? src.querySelector("img") : null;
-  const srcUrl = srcImg && (srcImg.currentSrc || srcImg.src);
-  if (srcUrl) {
-    el.style.backgroundImage = 'url("' + srcUrl + '")';
-    el.style.backgroundSize = "cover";
-    el.style.backgroundPosition = "50% 25%";
-    el.style.backgroundRepeat = "no-repeat";
-  }
-
-  el.style.opacity = "0";
-  document.body.appendChild(el);
-
-  const dx = b.left - startLeft;
-  const dy = b.top - startTop;
-  let started = false;
-  const startFly = function () {
-    if (started) return;
-    started = true;
-    // 起飞全程不加缩放：条带从起点到落点始终是「右侧卡组行」的真实尺寸。
-    const anim = el.animate([
-      { transform: "translate3d(0,0,0)", opacity: 0, filter: "brightness(1.3)" },
-      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
-      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
-      { transform: "translate3d(" + dx + "px," + dy + "px,0)", opacity: 1, filter: "brightness(1)" }
-    ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
-    const done = function () {
-      el.remove();
-      row.style.visibility = prevVis || "";
-      row.classList.add("fly-arrive");
-      setTimeout(function () { row.classList.remove("fly-arrive"); }, 460);
-    };
-    if (anim && anim.onfinish !== undefined) anim.onfinish = done;
-    else setTimeout(done, 740);
-  };
-
-  // 立刻起飞：之前为了等底图解码最多要停 260ms，体感就是「条带在起点卡一下」。
-  // 底图没就绪也不会空白 —— el 自己的 background-image 已经铺了来源卡图，
-  // 解码完成后 .row-bg 自然盖上去，中途无缝。
-  startFly();
-}
-
 async function addCardToDeck(card) {
   if (!card) return;
   // 乐队挑选模式：加入归属卡的乐队而不是卡组（所有加卡入口统一在此分流）
@@ -3516,7 +3422,6 @@ async function addCardToDeck(card) {
   updateDeckBadge();
   refreshAllCardBadges();
   renderDeckCards();
-  playDeckFlyAnim(card);
 
   let msg = "已添加：" + card.name + " ×" + (deckCount + 1);
   if (attachedAdded > 0) msg += "（附带 " + attachedAdded + " 张附属卡）";
@@ -5931,11 +5836,12 @@ function ensureLoadLogPanel() {
     '<button type="button" class="load-log-close" title="隐藏（刷新后回来）">×</button></span></div>' +
     '<div class="load-log-body"></div>';
   document.body.appendChild(box);
+  if (!settings.loadLog) box.style.display = "none";
   box.querySelector(".load-log-min").addEventListener("click", function () {
     box.classList.toggle("collapsed");
   });
   box.querySelector(".load-log-close").addEventListener("click", function () {
-    box.remove();
+    box.style.display = "none";   // 只隐藏：设置 → 日志 → 显示加载日志 可再打开
   });
   return box;
 }
@@ -5962,6 +5868,17 @@ function loadLog(level, msg) {
   } catch (e) { /* 日志本身绝不影响功能 */ }
 }
 window.loadLog = loadLog;
+
+function clearLoadLog() {
+  try {
+    loadLogItems.length = 0;
+    var box = document.getElementById("loadLog");
+    var body = box && box.querySelector(".load-log-body");
+    if (body) body.innerHTML = "";
+    loadLog("info", "日志已清空");
+  } catch (e) { /* 忽略 */ }
+}
+window.clearLoadLog = clearLoadLog;
 
 // ============================================================
 // 分享：图片 / 链接

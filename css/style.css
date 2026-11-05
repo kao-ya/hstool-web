@@ -821,7 +821,6 @@
     }
   }
 
-
   /* ============================================================
      组卡器页面
      ============================================================ */
@@ -1976,7 +1975,6 @@
     letter-spacing: 0.5px;
   }
 
-
   /* ============================================================
      全局悬浮预览（fixed 定位，脱离所有父级裁切）
      ============================================================ */
@@ -2637,7 +2635,6 @@
     z-index: 2;
   }
 
-
 /* ============================================================
    第一梯队补齐：关键词解释 tip / 符文章 / 排序下拉容器
    ============================================================ */
@@ -2776,25 +2773,13 @@ body.no-border .kw-tip { border-color: transparent; }
   /* ============================================================
      加入卡组的飞入动画（正式的卡面浮层，从卡牌库飞到卡组列表）
      ============================================================ */
-  .fly-card {
-    position: fixed;
-    z-index: 10060;
-    pointer-events: none;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
-    will-change: transform, opacity;
-  }
-  .fly-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  
+  
 
   /* 落地时目标行闪一下，明确「收到哪去了」 */
-  .deck-row.fly-arrive { animation: deckRowArrive 0.44s ease-out; }
-  @keyframes deckRowArrive {
-    0%   { background-color: color-mix(in srgb, var(--primary) 26%, transparent); }
-    100% { background-color: transparent; }
-  }
-  body.force-reduce-motion .fly-card { display: none; }
-
+  
+  
+  
   /* ============================================================
      粒子特效画布（清空卡组的散开效果）
      ============================================================ */
@@ -2833,10 +2818,7 @@ body.no-border .kw-tip { border-color: transparent; }
   background: rgba(12, 9, 7, .9); color: #d8cbb6;
   border: 1px solid rgba(230, 183, 97, .35); border-radius: 10px;
   font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); overflow: hidden;
-  /* 不要用 backdrop-filter：固定定位 + 背景滤镜会让 Chrome 建整页快照层，
-     滚动时出现「中部到底部一片空白」的重绘残影。改为不透明背景即可。 */
-  contain: layout paint;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); overflow: hidden; backdrop-filter: blur(2px);
 }
 #loadLog.collapsed .load-log-body { display: none; }
 .load-log-head {
@@ -2858,3 +2840,330 @@ body.no-border .kw-tip { border-color: transparent; }
 .load-log-line.lv-ok { color: #a8e2a0; }
 .load-log-line.lv-warn { color: #ffd479; }
 @media (max-width: 720px) { #loadLog { width: 200px; } }
+
+/* ============================================================
+   恢复块：这些规则在 c47fdaf6（分享/日志那轮）被我误删，
+   来源是 6c90909 版 style.css 的尾部。已跳过废弃的动画规则
+   （.fx-layer / body.fx-snapping 等已废弃的动画规则）。
+   ============================================================ */
+/* 排序方向按钮（与排序下拉同一行；图标朝上=升序，朝下=降序） */
+  .sort-dir-btn {
+    justify-content: center;
+    /* 与排序下拉严格同高：.filter-dropdowns 是 align-items:center 的 flex，
+       用 stretch 让按钮撑满行高（= 最高的那个下拉按钮），不用写死像素 */
+    align-self: stretch;
+    padding: 0 9px;
+    gap: 0;
+  }
+
+.sort-dir-btn[hidden] { display: none; }
+
+.sort-dir-btn .sort-dir-icon { display: inline-flex; align-items: center; }
+
+.sort-dir-btn .sort-dir-icon svg { transition: transform var(--motion-short); }
+
+.sort-dir-btn[data-dir="desc"] .sort-dir-icon svg { transform: rotate(180deg); }
+
+.sort-dir-btn:hover { color: var(--primary); }
+
+/* ============================================================
+     卡组分享按钮：描边样式（与「清空」按钮同一档视觉，只是主色而非错误色）
+     ============================================================ */
+  .btn-outline {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+
+.btn-outline:hover {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+
+/* ============================================================
+     卡组图片导出弹窗
+     ============================================================ */
+  .poster-modal-content { max-width: 430px; }
+
+.poster-modal-body { padding-top: 2px; }
+
+.poster-seg {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0 12px;
+  }
+
+.poster-seg-btn {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--shape-full);
+    cursor: pointer;
+    transition: color var(--motion-short), border-color var(--motion-short),
+                background-color var(--motion-short);
+  }
+
+.poster-seg-btn:hover { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+
+.poster-seg-btn.active {
+    color: var(--primary);
+    border-color: color-mix(in srgb, var(--primary) 60%, transparent);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+
+.poster-desc {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--muted);
+    min-height: 42px;
+  }
+
+.poster-progress {
+    min-height: 18px;
+    font-size: 12.5px;
+    color: var(--primary);
+    line-height: 1.5;
+  }
+
+.poster-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 14px;
+  }
+
+.poster-actions .btn { min-width: 88px; justify-content: center; }
+
+/* 落地时目标行闪一下，明确「收到哪去了」 */
+  
+
+/* ============================================================
+     导出弹窗里的预览图
+     ============================================================ */
+  .poster-preview-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    margin: 2px 0 10px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background:
+      repeating-conic-gradient(rgba(255, 255, 255, 0.035) 0% 25%, transparent 0% 50%) 50% / 16px 16px,
+      rgba(0, 0, 0, 0.22);
+    position: relative;
+    overflow: hidden;
+  }
+
+.poster-preview {
+    display: block;
+    max-width: 100%;
+    border-radius: 8px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  }
+
+.poster-preview-hint {
+    position: absolute;
+    font-size: 12.5px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+/* ============================================================
+     通用确认弹窗
+     ============================================================ */
+  .confirm-modal-content { max-width: 400px; }
+
+.confirm-desc {
+    margin: 0 0 6px;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+.confirm-desc b { color: var(--primary); font-weight: 700; }
+
+.confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 16px;
+  }
+
+.confirm-actions .btn { min-width: 84px; justify-content: center; }
+
+/* 只给确认弹窗的危险按钮上填充色：以前写成裸 .btn-danger，
+     把工具栏里的「清空卡组」也一起染红了（那个应该是描边样式）。 */
+  .confirm-actions .btn-danger {
+    background: color-mix(in srgb, #d94b3d 26%, transparent);
+    color: #ff8b7e;
+    border: 1px solid color-mix(in srgb, #d94b3d 60%, transparent);
+  }
+
+.confirm-actions .btn-danger:hover {
+    background: color-mix(in srgb, #d94b3d 38%, transparent);
+    color: #ffb0a6;
+  }
+
+/* ============================================================
+     死亡骑士符文槽（英雄插画下方，点一下切换 空→血→冰→邪）
+     ============================================================ */
+  /* 符文槽：夹在「英雄卡」与「卡组列表」之间，整行居中（不再叠在英雄图上） */
+  #heroRunes {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 4px 0 8px;
+    padding: 0;
+  }
+
+#heroRunes:empty { display: none; }
+
+#heroRunes .hero-rune {
+    width: 31px; height: 31px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    -webkit-appearance: none;
+    appearance: none;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+    transition: transform 0.12s var(--ease-standard), filter 0.12s var(--ease-standard);
+  }
+
+#heroRunes .hero-rune img {
+    position: static;
+    inset: auto;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 1;
+    pointer-events: none;
+  }
+
+#heroRunes .hero-rune.empty img { opacity: 0.4; }
+
+#heroRunes .hero-rune:hover { transform: translateY(-2px) scale(1.08); }
+
+#heroRunes .hero-rune:hover img { opacity: 1; }
+
+#heroRunes .hero-rune.filled.rune-blood { filter: drop-shadow(0 0 7px rgba(214,64,52,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+
+#heroRunes .hero-rune.filled.rune-frost { filter: drop-shadow(0 0 7px rgba(88,164,232,0.65)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+
+#heroRunes .hero-rune.filled.rune-unholy { filter: drop-shadow(0 0 7px rgba(120,196,96,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
+
+#heroRunes .hero-rune-total {
+    margin-left: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.4px;
+    color: var(--gold-light);
+    padding: 3px 5px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.6);
+    border: 1px solid rgba(212,175,110,0.3);
+  }
+
+#heroRunes .hero-rune-total.over {
+    color: #ff9a8f;
+    border-color: color-mix(in srgb, #d94b3d 60%, transparent);
+  }
+
+/* ============================================================
+     卡牌详情里的切换按钮（异画 / 中英文）
+     ============================================================ */
+  .detail-toggles {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 2px 0 10px;
+  }
+
+.detail-toggle {
+    appearance: none;
+    cursor: pointer;
+    padding: 5px 13px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: var(--text);
+    background: transparent;
+    border: 1.5px solid color-mix(in srgb, var(--primary) 45%, transparent);
+    transition: background-color var(--motion-short), border-color var(--motion-short);
+  }
+
+.detail-toggle:hover {
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+    border-color: var(--primary);
+  }
+
+.detail-toggle[hidden] { display: none; }
+
+/* ============================================================
+     加卡飞入：飞的是「条形卡」克隆（见 playDeckFlyAnim），不是卡面
+     ============================================================ */
+  
+
+/* 英雄选择器里的「未上线」职业：能看见、能认出，但点不动 */
+  .hero-item.disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    filter: grayscale(0.85);
+  }
+
+.hero-item.disabled:hover .hero-img-wrap img { transform: none; }
+
+/* ============================================================
+   组卡器页：左列（搜索栏 + 卡牌网格 + 分页栏）撑满一屏，
+   分页栏正好落在浏览器底部，网格因此能多显示一行；
+   右列卡组栏同步变高，卡组列表可显示更多行。
+   （单列布局 ≤1100px 不适用，页面本来就该滚动）
+   ============================================================ */
+@media (min-width: 1101px) {
+  /* 这一层被 scale(0.92) 缩放过：视觉高度 = 布局高度 × 0.92，
+     所以布局盒会比视口多出 8%。把外层 section 钉成视口高度并裁掉溢出，
+     文档高度才不会被撑出多余的一条可滚动区域。 */
+  #tab-preview:not(.hidden) {
+    height: calc(100vh - 68px);
+    overflow: hidden;
+  }
+  .preview-page {
+    height: calc((100vh - 68px) / 0.92);
+  }
+  .preview-main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .preview-main > .card-plain {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 0;
+  }
+  .preview-main > .card-plain > .card-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    align-content: start;
+    /* 关键：网格一旦拿到「确定高度」，auto 行会被压缩到几像素
+       （卡片彼此叠在一起）。max-content 让每行按内容撑高，
+       超出部分交给 overflow-y 滚动。 */
+    grid-auto-rows: max-content;
+  }
+  .preview-main > .card-plain > .pagination {
+    flex: 0 0 auto;
+  }
+}
