@@ -3668,10 +3668,10 @@ function playDeckFlyAnim(card) {
     started = true;
     // 起飞全程不加缩放：条带从起点到落点始终是「右侧卡组行」的真实尺寸。
     const anim = el.animate([
-      { transform: "translate3d(0,0,0)", opacity: 0, filter: "brightness(1.3)" },
-      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0)", opacity: 1, offset: 0.42, filter: "brightness(1.16)" },
-      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0)", opacity: 1, offset: 0.8, filter: "brightness(1.05)" },
-      { transform: "translate3d(" + dx + "px," + dy + "px,0)", opacity: 1, filter: "brightness(1)" }
+      { transform: "translate3d(0,0,0)", opacity: 0 },
+      { transform: "translate3d(" + (dx * 0.42) + "px," + (dy * 0.42 - 26) + "px,0)", opacity: 1, offset: 0.42 },
+      { transform: "translate3d(" + (dx * 0.8) + "px," + (dy * 0.8 - 8) + "px,0)", opacity: 1, offset: 0.8 },
+      { transform: "translate3d(" + dx + "px," + dy + "px,0)", opacity: 1 }
     ], { duration: 780, easing: "cubic-bezier(.22,.62,.28,1)", fill: "forwards" });
     const done = function () {
       el.remove();

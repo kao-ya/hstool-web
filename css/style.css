@@ -2768,28 +2768,7 @@ body.no-border .kw-tip { border-color: transparent; }
   }
   .poster-actions .btn { min-width: 88px; justify-content: center; }
 
-  /* ============================================================
-     加入卡组的飞入动画（正式的卡面浮层，从卡牌库飞到卡组列表）
-     ============================================================ */
-  .fly-card {
-    position: fixed;
-    z-index: 10060;
-    pointer-events: none;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
-    will-change: transform, opacity;
-  }
-  .fly-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
-
-  /* 落地时目标行闪一下，明确「收到哪去了」 */
-  .deck-row.fly-arrive { animation: deckRowArrive 0.44s ease-out; }
-  @keyframes deckRowArrive {
-    0%   { background-color: color-mix(in srgb, var(--primary) 26%, transparent); }
-    100% { background-color: transparent; }
-  }
-  body.force-reduce-motion .fly-card { display: none; }
-
+  /* 落地时目标行极轻地泛一下蓝（不发光、不闪白），明确「收到哪去了」 */
   /* ============================================================
      粒子特效画布（清空卡组的散开效果）
      ============================================================ */
@@ -2803,43 +2782,13 @@ body.no-border .kw-tip { border-color: transparent; }
   /* ============================================================
      加卡飞行：官方那种「卡面变蓝发光」
      ============================================================ */
-  .fly-card {
-    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
-                0 0 28px rgba(74, 163, 255, 0.8),
-                0 14px 30px rgba(0, 0, 0, 0.45);
-    isolation: isolate;
-  }
-  .fly-card img {
-    filter: saturate(1.2) brightness(1.06) contrast(1.02);
-  }
-  .fly-card::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background:
-      linear-gradient(160deg, rgba(86, 170, 255, 0.5) 0%, rgba(38, 118, 226, 0.22) 46%, rgba(86, 170, 255, 0.04) 100%);
-    mix-blend-mode: screen;
-    pointer-events: none;
-  }
-
   /* 落地时整行泛蓝（覆盖此前的主色版本） */
   .deck-row.fly-arrive {
-    animation: deckRowArriveBlue 0.5s ease-out;
+    animation: deckRowArriveBlue 0.42s ease-out;
   }
   @keyframes deckRowArriveBlue {
-    0% {
-      background-color: rgba(74, 163, 255, 0.34);
-      box-shadow: inset 0 0 0 1.5px rgba(96, 176, 255, 0.9), 0 0 18px rgba(74, 163, 255, 0.55);
-    }
-    55% {
-      background-color: rgba(74, 163, 255, 0.16);
-      box-shadow: inset 0 0 0 1px rgba(96, 176, 255, 0.5), 0 0 10px rgba(74, 163, 255, 0.28);
-    }
-    100% {
-      background-color: transparent;
-      box-shadow: none;
-    }
+    0%   { background-color: rgba(96, 176, 255, 0.14); }
+    100% { background-color: transparent; }
   }
 
   /* ============================================================
@@ -3029,9 +2978,8 @@ body.no-border .kw-tip { border-color: transparent; }
     pointer-events: none;
     border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
-                0 0 22px rgba(74, 163, 255, 0.7),
-                0 10px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.85),
+                0 8px 18px rgba(0, 0, 0, 0.45);
     will-change: transform, opacity;
     isolation: isolate;
   }
