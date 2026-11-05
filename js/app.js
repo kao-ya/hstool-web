@@ -2966,12 +2966,6 @@ function createCardElement(card, index) {
   name.textContent = card.name;
 
   div.appendChild(img);
-  // 遮罩只盖卡面（不含底部名字条）：作为 grid 第 1 行的绝对定位子元素，
-  // 包含块就是「卡面那一格」，所以高度自动等于卡面，不用 JS 量。
-  const veil = document.createElement("div");
-  veil.className = "card-veil";
-  veil.setAttribute("aria-hidden", "true");
-  div.appendChild(veil);
   div.appendChild(cost);
   div.appendChild(name);
 
