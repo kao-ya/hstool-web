@@ -2793,299 +2793,60 @@ body.no-border .kw-tip { border-color: transparent; }
   /* ============================================================
      粒子特效画布（清空卡组的散开效果）
      ============================================================ */
-  .fx-layer {
-    position: fixed;
-    inset: 0;
-    z-index: 10070;
-    pointer-events: none;
-  }
-
-  /* ============================================================
-     加卡飞行：官方那种「卡面变蓝发光」
-     ============================================================ */
-  .fly-card {
-    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
-                0 0 28px rgba(74, 163, 255, 0.8),
-                0 14px 30px rgba(0, 0, 0, 0.45);
-    isolation: isolate;
-  }
-  .fly-card img {
-    filter: saturate(1.2) brightness(1.06) contrast(1.02);
-  }
-  .fly-card::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background:
-      linear-gradient(160deg, rgba(86, 170, 255, 0.5) 0%, rgba(38, 118, 226, 0.22) 46%, rgba(86, 170, 255, 0.04) 100%);
-    mix-blend-mode: screen;
-    pointer-events: none;
-  }
-
-  /* 落地时整行泛蓝（覆盖此前的主色版本） */
-  .deck-row.fly-arrive {
-    animation: deckRowArriveBlue 0.5s ease-out;
-  }
-  @keyframes deckRowArriveBlue {
-    0% {
-      background-color: rgba(74, 163, 255, 0.34);
-      box-shadow: inset 0 0 0 1.5px rgba(96, 176, 255, 0.9), 0 0 18px rgba(74, 163, 255, 0.55);
-    }
-    55% {
-      background-color: rgba(74, 163, 255, 0.16);
-      box-shadow: inset 0 0 0 1px rgba(96, 176, 255, 0.5), 0 0 10px rgba(74, 163, 255, 0.28);
-    }
-    100% {
-      background-color: transparent;
-      box-shadow: none;
-    }
-  }
-
-  /* ============================================================
-     导出弹窗里的预览图
-     ============================================================ */
-  .poster-preview-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 150px;
-    margin: 2px 0 10px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background:
-      repeating-conic-gradient(rgba(255, 255, 255, 0.035) 0% 25%, transparent 0% 50%) 50% / 16px 16px,
-      rgba(0, 0, 0, 0.22);
-    position: relative;
-    overflow: hidden;
-  }
-  .poster-preview {
-    display: block;
-    max-width: 100%;
-    border-radius: 8px;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
-  }
-  .poster-preview-hint {
-    position: absolute;
-    font-size: 12.5px;
-    color: var(--muted);
-    letter-spacing: 0.02em;
-  }
-
-  /* ============================================================
-     通用确认弹窗
-     ============================================================ */
-  .confirm-modal-content { max-width: 400px; }
-  .confirm-desc {
-    margin: 0 0 6px;
-    font-size: 13.5px;
-    line-height: 1.7;
-    color: var(--text);
-  }
-  .confirm-desc b { color: var(--primary); font-weight: 700; }
-  .confirm-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    padding-top: 16px;
-  }
-  .confirm-actions .btn { min-width: 84px; justify-content: center; }
-  /* 只给确认弹窗的危险按钮上填充色：以前写成裸 .btn-danger，
-     把工具栏里的「清空卡组」也一起染红了（那个应该是描边样式）。 */
-  .confirm-actions .btn-danger {
-    background: color-mix(in srgb, #d94b3d 26%, transparent);
-    color: #ff8b7e;
-    border: 1px solid color-mix(in srgb, #d94b3d 60%, transparent);
-  }
-  .confirm-actions .btn-danger:hover {
-    background: color-mix(in srgb, #d94b3d 38%, transparent);
-    color: #ffb0a6;
-  }
-
-  /* ============================================================
-     死亡骑士符文槽（英雄插画下方，点一下切换 空→血→冰→邪）
-     ============================================================ */
-  /* 符文槽：夹在「英雄卡」与「卡组列表」之间，整行居中（不再叠在英雄图上） */
-  #heroRunes {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    margin: 4px 0 8px;
-    padding: 0;
-  }
-  #heroRunes:empty { display: none; }
-  #heroRunes .hero-rune {
-    width: 31px; height: 31px;
-    padding: 0;
-    border: 0;
-    background: none;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    -webkit-appearance: none;
-    appearance: none;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
-    transition: transform 0.12s var(--ease-standard), filter 0.12s var(--ease-standard);
-  }
-  #heroRunes .hero-rune img {
-    position: static;
-    inset: auto;
-    width: 100%; height: 100%;
-    object-fit: contain;
-    opacity: 1;
-    pointer-events: none;
-  }
-  #heroRunes .hero-rune.empty img { opacity: 0.4; }
-  #heroRunes .hero-rune:hover { transform: translateY(-2px) scale(1.08); }
-  #heroRunes .hero-rune:hover img { opacity: 1; }
-  #heroRunes .hero-rune.filled.rune-blood { filter: drop-shadow(0 0 7px rgba(214,64,52,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
-  #heroRunes .hero-rune.filled.rune-frost { filter: drop-shadow(0 0 7px rgba(88,164,232,0.65)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
-  #heroRunes .hero-rune.filled.rune-unholy { filter: drop-shadow(0 0 7px rgba(120,196,96,0.6)) drop-shadow(0 2px 4px rgba(0,0,0,0.8)); }
-  #heroRunes .hero-rune-total {
-    margin-left: 3px;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: 0.4px;
-    color: var(--gold-light);
-    padding: 3px 5px;
-    border-radius: 999px;
-    background: rgba(0,0,0,0.6);
-    border: 1px solid rgba(212,175,110,0.3);
-  }
-  #heroRunes .hero-rune-total.over {
-    color: #ff9a8f;
-    border-color: color-mix(in srgb, #d94b3d 60%, transparent);
-  }
-
-  /* ============================================================
-     清空卡组：行原地「化掉」（粒子从它的像素上起飞，见 ParticleFX）
-     ============================================================ */
-  /* 行的化掉交给 canvas（ParticleFX），这里不再用 CSS 动画 */
-
-  /* ============================================================
-     清空卡组：消散期间让右侧栏整块浮到 canvas 之上
-     canvas(.fx-layer) 的 z-index 是 10070；侧栏平时在它下面，
-     所以 canvas 上的卡面会盖住行内的名字/法力水晶。
-     消散时把 .preview-page（有 transform，本身就是层叠上下文）抬到 10071，
-     行内的 DOM 叠加层就能压在卡面之上，被同一套 clip-path 跟着前沿裁掉 ——
-     整张卡（卡面 + 文字 + 水晶 + 暗角）一起消散。
-     侧栏自身底色必须同时去掉，否则会挡住 canvas 上的卡面；
-     底色改由 canvas 每帧先铺一层（缝隙处才不会漏出页面背景图）。
-     ============================================================ */
-  body.fx-snapping .preview-page {
-    position: relative;
-    z-index: 10071;
-  }
-  body.fx-snapping .deck-sidebar {
-    background: transparent;
-    border-color: transparent;
-    box-shadow: none;
-  }
-  body.fx-snapping #deckCardsList .deck-row {
-    background: transparent;
-  }
-  body.fx-snapping .deck-row.snap-clipped {
-    will-change: clip-path;
-  }
-
-  /* ============================================================
-     卡牌详情里的切换按钮（异画 / 中英文）
-     ============================================================ */
-  .detail-toggles {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 2px 0 10px;
-  }
-  .detail-toggle {
-    appearance: none;
-    cursor: pointer;
-    padding: 5px 13px;
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 600;
-    letter-spacing: .2px;
-    color: var(--text);
-    background: transparent;
-    border: 1.5px solid color-mix(in srgb, var(--primary) 45%, transparent);
-    transition: background-color var(--motion-short), border-color var(--motion-short);
-  }
-  .detail-toggle:hover {
-    background: color-mix(in srgb, var(--primary) 14%, transparent);
-    border-color: var(--primary);
-  }
-  .detail-toggle[hidden] { display: none; }
-
-  /* ============================================================
-     加卡飞入：飞的是「条形卡」克隆（见 playDeckFlyAnim），不是卡面
-     ============================================================ */
-  .deck-row.fly-strip {
-    position: fixed;
-    z-index: 10060;
-    margin: 0;
-    pointer-events: none;
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
-                0 0 22px rgba(74, 163, 255, 0.7),
-                0 10px 24px rgba(0, 0, 0, 0.45);
-    will-change: transform, opacity;
-    isolation: isolate;
-  }
-  .deck-row.fly-strip .row-actions { display: none !important; }
-  body.force-reduce-motion .deck-row.fly-strip { display: none; }
-
-  /* 英雄选择器里的「未上线」职业：能看见、能认出，但点不动 */
-  .hero-item.disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-    filter: grayscale(0.85);
-  }
-  .hero-item.disabled:hover .hero-img-wrap img { transform: none; }
-
-/* ============================================================
-   组卡器页：左列（搜索栏 + 卡牌网格 + 分页栏）撑满一屏，
-   分页栏正好落在浏览器底部，网格因此能多显示一行；
-   右列卡组栏同步变高，卡组列表可显示更多行。
-   （单列布局 ≤1100px 不适用，页面本来就该滚动）
-   ============================================================ */
-@media (min-width: 1101px) {
-  /* 这一层被 scale(0.92) 缩放过：视觉高度 = 布局高度 × 0.92，
-     所以布局盒会比视口多出 8%。把外层 section 钉成视口高度并裁掉溢出，
-     文档高度才不会被撑出多余的一条可滚动区域。 */
-  #tab-preview:not(.hidden) {
-    height: calc(100vh - 68px);
-    overflow: hidden;
-  }
-  .preview-page {
-    height: calc((100vh - 68px) / 0.92);
-  }
-  .preview-main {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .preview-main > .card-plain {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    margin-bottom: 0;
-  }
-  .preview-main > .card-plain > .card-grid {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    align-content: start;
-    /* 关键：网格一旦拿到「确定高度」，auto 行会被压缩到几像素
-       （卡片彼此叠在一起）。max-content 让每行按内容撑高，
-       超出部分交给 overflow-y 滚动。 */
-    grid-auto-rows: max-content;
-  }
-  .preview-main > .card-plain > .pagination {
-    flex: 0 0 auto;
-  }
+  /* ---------- 分享弹窗 ---------- */
+.share-modal-content { max-width: 520px; }
+.share-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.share-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 16px 14px; text-align: left; cursor: pointer;
+  background: color-mix(in srgb, var(--surface-container, #2a2320) 88%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--outline, #6b5c50) 45%, transparent);
+  border-radius: 14px; color: var(--text, #f2e7d5); font-size: 13px;
+  transition: border-color .15s, background-color .15s, transform .15s;
 }
+.share-choice:hover {
+  border-color: color-mix(in srgb, var(--primary, #e6b761) 60%, transparent);
+  background: color-mix(in srgb, var(--primary, #e6b761) 12%, transparent);
+}
+.share-choice:active { transform: translateY(1px); }
+.share-choice .icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.share-choice-title { font-weight: 700; font-size: 14px; }
+.share-choice-desc { font-size: 12px; opacity: .72; line-height: 1.5; }
+.share-link-row { display: flex; gap: 8px; margin-top: 14px; }
+.share-link-row[hidden] { display: none; }
+.share-link-row input {
+  flex: 1; min-width: 0; padding: 9px 12px; font-size: 12px; font-family: ui-monospace, monospace;
+  background: rgba(0, 0, 0, .28); color: var(--text, #f2e7d5);
+  border: 1px solid color-mix(in srgb, var(--outline, #6b5c50) 50%, transparent); border-radius: 10px;
+}
+.share-hint { margin: 12px 0 0; font-size: 12px; opacity: .7; line-height: 1.6; }
+
+/* ---------- 加载日志 ---------- */
+#loadLog {
+  position: fixed; left: 10px; bottom: 10px; z-index: 10050;
+  width: 268px; max-height: 40vh; display: flex; flex-direction: column;
+  background: rgba(12, 9, 7, .9); color: #d8cbb6;
+  border: 1px solid rgba(230, 183, 97, .35); border-radius: 10px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); overflow: hidden; backdrop-filter: blur(2px);
+}
+#loadLog.collapsed .load-log-body { display: none; }
+.load-log-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; background: rgba(230, 183, 97, .12);
+  border-bottom: 1px solid rgba(230, 183, 97, .2); cursor: default;
+}
+.load-log-title { font-weight: 700; color: #f0c979; letter-spacing: .04em; }
+.load-log-actions { display: flex; gap: 4px; }
+.load-log-actions button {
+  width: 18px; height: 18px; line-height: 1; padding: 0; cursor: pointer;
+  background: transparent; color: #d8cbb6; border: 1px solid rgba(216, 203, 182, .35);
+  border-radius: 4px; font-size: 12px;
+}
+.load-log-actions button:hover { background: rgba(255, 255, 255, .12); }
+.load-log-body { padding: 6px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.load-log-line { white-space: pre-wrap; word-break: break-word; }
+.load-log-line.lv-err { color: #ff9b8f; }
+.load-log-line.lv-ok { color: #a8e2a0; }
+.load-log-line.lv-warn { color: #ffd479; }
+@media (max-width: 720px) { #loadLog { width: 200px; } }

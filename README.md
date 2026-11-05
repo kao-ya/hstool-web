@@ -1,238 +1,318 @@
 # HsTool
 
-炉石传说的**纯前端**卡牌工具箱：卡牌检索、卡组编辑器、卡组代码（deckstring）编解码。整站是一个静态站点，没有后端、没有登录、不需要构建，卡牌数据以 JSON 形式随站点一起发布。
+**炉石传说卡组构筑与解析工具** —— 纯前端静态站，零后端、零构建、部署即用。
 
-在线地址：<https://hstool.pages.dev>
+![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white)
+![CSS3](https://img.shields.io/badge/CSS3-1572B6?logo=css3&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
+![Static](https://img.shields.io/badge/static_site-no_build_step-brightgreen)
+![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
----
+纯静态 · 无构建步骤 · 无依赖 · 无后端
 
-## 1. 目录结构
+把完整卡牌数据库交给浏览器，所有查询、编解码、渲染都在本地完成 —— 没有服务器，没有接口，没有等待。
 
-```
-index.html                     单页入口（三个页面：组卡器 / 解码 / 编码）
-css/style.css                  全部样式
-js/app.js                      全部逻辑（单文件，无模块化，函数都是全局的）
-data/hearthstone_cards_zhCN.json   全量卡牌数据，36,390 条，约 11 MB
-data/cards-meta.json               分组元数据（职业/系列/稀有度… 的中文名与排序）
-data/cards-signatures.json         异画（签名版）卡图索引，460 条
-img/  fonts/                   背景、图标、字体
-```
-
-部署方式与本文件无关：把上述目录原样放到任意静态服务器上即可。
+> 在线体验：`https://<你的项目>.pages.dev`（部署后替换此处）
 
 ---
 
-## 2. 页面能做什么
+## 目录
 
-| 页面 | 能力 |
+- [特性](#-特性)
+- [快速开始](#-快速开始本地预览)
+- [部署](#-部署cloudflare-pages)
+- [项目结构](#-项目结构)
+- [数据文件](#-数据文件)
+- [更新卡库](#-更新卡库)
+- [技术栈与兼容性](#-技术栈与兼容性)
+- [性能](#-性能)
+- [常见问题](#-常见问题)
+- [已知限制](#-已知限制)
+- [致谢与声明](#-致谢与声明)
+
+---
+
+## ✨ 特性
+
+### 🎴 组卡器
+
+- 构筑规则校验：传说 1 张、其余 2 张、卡组上限 30 张
+- **实时粉尘统计**：按稀有度自动换算合成所需奥术之尘
+- **法力曲线**：随组卡实时更新
+- 卡组列表支持行内移除、份数增减、拖拽加入
+- **导出到解码页**：一键生成可分享的卡组代码
+
+### 🔁 卡组编解码
+
+- **解码**：粘贴官方短码，解析出完整卡组与英雄
+- **编码**：卡组一键生成官方短码
+- 完整实现官方 **deckstring** 格式：Base64 → varint，涵盖版本、格式、英雄列表、单张 / 双张、多张块与副卡组
+- 编码时按 `dbfId` 升序排序，保证同一卡组生成**稳定一致的短码**
+- 同时支持「官方格式文本」导入（自动识别并降级解析）
+
+### 🔍 卡牌搜索与筛选
+
+- **8 个筛选维度**：职业、类型、稀有度、随从种族、法术派系、系列、费用、收藏状态
+- 同维度多选取并集，跨维度取交集
+- **标签式筛选**：已选项以标签展示，可单点移除、可一键清空
+- 支持按**卡牌名称、描述文本、卡牌 ID、dbfId 前缀**搜索
+- 可收藏判定：先按类型门（仅随从 / 法术 / 英雄 / 武器 / 地标可收藏），再按系列（经典排除、核心放行），最后回落数据源字段
+- 分页 200 张/页，36,022 张共 181 页
+
+### 🃏 特殊卡牌支持
+
+- **奇闻卡附属卡**：按 ID 前缀自动挂载附属卡牌，并在详情页展示归属关系
+- **乐队 / 定制模式**：支持布洛克斯加、血色战队、奇利亚斯等带归属卡的门槛校验
+- **英雄选择器**：11 个基础职业英雄
+- **衍生 token 联动清理**：移除主卡时自动清理关联附属卡，不留孤儿卡
+
+### 🖼️ 卡图加载
+
+- **IntersectionObserver 懒加载**：首屏仅加载可见的约 30 张
+- **按类型直连占位图**：附魔 / 按钮 / 拖动三类内部对象全库无卡图，直接使用本地占位卡背，**零网络探测**
+- **双源回退**：中文卡图缺失自动切英文，仍失败则用本地占位图
+- 未加载时预留卡面比例，避免布局抖动
+
+### 🎨 界面与设置
+
+- **Material Design 3** 设计规范对齐
+- **12 项设置**，面板分「设置 / 关于」两页，「设置」页内按 *功能 / 布局 / 控件* 分三组：
+
+  | 分组 | 设置项 |
+  | --- | --- |
+  | 功能 | 悬停预览、水晶颜色 |
+  | 布局 | MD3 风格、紧凑布局、减弱动效、背景纯色、背景可见度（0–100 滑块） |
+  | 控件 | 卡牌面板透明、搜索栏透明、预览图背景透明、卡牌背景透明、去边框去线条 |
+
+  命名约定：凡带「透明」的开关，一律 **ON = 该元素透出背景**，且**默认全部关闭**。
+- 设置持久化于 `localStorage`（键名 `hstool-settings`）
+- 响应式布局，适配窄屏
+- 全局悬浮卡图预览（可在设置中关闭）
+
+---
+
+## 🚀 快速开始（本地预览）
+
+浏览器出于安全策略禁止 `file://` 下 `fetch` 本地 JSON，**必须通过 HTTP 访问**：
+
+```bash
+# 任选其一，在项目根目录执行
+python -m http.server 8000      # Windows / macOS / Linux（python3 亦可）
+npx serve .                     # 需要 Node.js
+php -S localhost:8000           # 需要 PHP
+```
+
+打开 `http://localhost:8000` 即可。
+
+> 直接双击 `index.html` 会白屏并提示加载失败，这不是 bug，是 CORS 限制。
+
+---
+
+## ☁️ 部署（Cloudflare Pages）
+
+### 方式一：连接 Git 仓库（推荐，push 即自动部署）
+
+1. 把本项目推送到 GitHub / GitLab 仓库
+2. Cloudflare 控制台 → **Workers & Pages** → **Create application** → **Pages** → **Connect to Git**
+3. 选择仓库，按下表填写构建配置：
+
+| 配置项 | 填写内容 |
 | --- | --- |
-| 组卡器 | 卡组编辑、7 维筛选、9 种排序、导入导出、符文校验、法力曲线、尘量统计、卡组长图 |
-| 解码 | 把卡组代码或官方格式文本解析成卡表，可一键跳到组卡器继续编辑 |
-| 编码 | 用「英雄 + 卡牌列表」生成卡组代码，支持标准/狂野、乐队（sideboard） |
+| Production branch | `main` |
+| Framework preset | `None` |
+| **Build command** | **留空** |
+| **Build output directory** | `/` |
+| Root directory | 留空 |
+
+4. 保存并部署，约 30 秒 ~ 2 分钟后拿到 `https://<项目名>.pages.dev`
+
+之后每次推送到 `main` 都会自动重建。历史版本可在 **Deployments** 里一键 **Rollback**。
+
+### 方式二：拖拽上传（最快，无需仓库）
+
+1. **Workers & Pages** → **Create application** → **Pages** → **Upload assets**
+2. 把本项目**所有文件和文件夹**（或打包后的 zip）一起拖进去
+3. **Deploy site**
+
+> ⚠️ 必须保证 `index.html` 在**根目录**，否则站点 404。压缩时请进入文件夹内全选再压，不要连文件夹一起压。
+
+### 手动触发重建（可选）
+
+若代码通过 API 提交、CI 未收到 push 事件，可在项目 **Settings → Builds & deployments → Deploy hooks** 建一条 hook，之后 `GET` 该 URL 即可触发构建。
 
 ---
 
-## 3. 在代码里直接调用（推荐方式一：同页面控制台）
+## 📁 项目结构
 
-`js/app.js` 是普通脚本，**所有函数都挂在全局作用域**，页面加载完成后即可直接调用。
-
-打开站点 → F12 → Console，粘贴：
-
-```js
-// 1) 卡组代码 → 结构
-const deck = decodeDeckstring("AAEBAaCKBAGWBQG7AgAA");
-console.log(deck);
-
-// 2) 结构 → 卡组代码
-const code = encodeDeckstring([66848], [[662, 1], [315, 2]], 1);
-console.log(code);   // "AAEBAaCKBAGWBQG7AgAA"
-
-// 3) 卡组代码 → 中文清单（可直接展示给用户）
-console.log(formatDecoded(deck));
+```
+.
+├── index.html                          # 页面外壳（结构）
+├── LICENSE                             # MIT 许可证全文
+├── css/
+│   └── style.css                       # 全部样式（MD3 设计变量 + 主题开关）
+├── js/
+│   └── app.js                          # 全部逻辑（数据层 / 搜索 / 组卡 / 编解码 / 设置）
+├── img/
+│   ├── Background.jpg                  # 背景图
+│   ├── manacrystal.png                 # 法力水晶贴图
+│   ├── nocard.png                      # 无卡图时的占位卡背
+│   └── wawa.png                        # 「关于」页项目图标
+├── fonts/
+│   └── Belwe.ttf                       # 卡牌显示字体
+├── functions/                          # Cloudflare Pages Functions（边缘查询）
+│   ├── _lib/cards-db.js                # 服务端索引：筛选 / 排序 / 分页 / 详情
+│   └── api/                            # boot、cards/{search,detail,lookup,byname}、heroes、sets、status、card-img、hs-signature
+├── scripts/
+│   └── build-index.mjs                 # 从原始卡库生成索引与首屏包
+├── _routes.json                         # 只有 /api/* 走 Functions，静态资源直出
+└── data/
+    ├── first.json                      # 首屏静态包（meta + 第一页 200 张 + 11 个英雄，约 109 KB）
+    ├── cards-lite.json                 # 边缘索引（36,390 行紧凑数组，5.88 MB，只给 Functions 读）
+    ├── meta.json                       # 元数据（枚举中文映射、58 个系列分组、图床前缀）
+    └── cards-signatures.json           # 异画（签名卡图）索引，460 条
 ```
 
-实测输出：
+> 原始卡库（`hearthstone_cards_zhCN.json`，11 MB）**不进仓库**：它只是构建索引的输入，
+> 由 GitHub Actions 每次现下到 `/tmp` 再跑 `scripts/build-index.mjs`。
 
-```js
-decodeDeckstring("AAEBAaCKBAGWBQG7AgAA")
-// {
-//   version: 1,
-//   format: 1,
-//   hero_dbf: [66848],
-//   cards: [[662, 1], [315, 2]],
-//   sideboard: []
-// }
+无 `package.json`、无 `node_modules`、无打包产物 —— 运行时就是这些静态文件 + 边缘函数。
 
-formatDecoded(...)
-// 版本     : 1
-// 模式     : 狂野
-// 英雄     : 魔导师晨拥(DBF 66848)
-// 卡牌总数 : 3
-//
-// 卡牌列表：
-//   · 寒冰箭(DBF 662) × 1
-//   · 火球术(DBF 315) × 2
-```
+---
 
-### 常用函数一览
+## 📡 数据文件
 
-| 函数 | 签名 | 说明 |
+首屏只下一份静态包，其余查询交给边缘函数：
+
+| 文件 | 谁读 | 作用 |
 | --- | --- | --- |
-| `decodeDeckstring(code)` | `(string) => {version, format, hero_dbf, cards, sideboard}` | 卡组代码 → 结构。校验失败会抛 `Error`，`message` 是中文原因 |
-| `encodeDeckstring(heroes, cards, fmt, version, sideboard)` | `(number[], [dbf,count][], 1\|2, 1, sideboard?) => string` | 结构 → 卡组代码。`fmt`：1 狂野 / 2 标准 |
-| `formatDecoded(deck)` | `(deck) => string` | 结构 → 可读清单 |
-| `formatOfficialDeck(deck)` | `(deck) => string` | 结构 → 官方「# 2x (4) 火球术」文本 |
-| `parseDeckText(text)` | `(string) => {hero, format, cards}` | 官方文本或卡名列表 → 结构（导入用） |
-| `searchCards(q, filters, offset, limit, sort)` | 见下 | 本地检索，返回 `{cards, total, offset, shown}` |
-| `cardImgUrl(card, size)` | `(card\|dbfId, "256x"\|"512x"\|"orig") => string` | 卡面渲染图 URL |
-| `heroIllustrationUrl(cardId)` | `(string) => string` | 英雄/随从方形插画 URL |
-| `cardRunes(card)` | `(card) => {blood,frost,unholy}` | 死亡骑士符文消耗 |
-| `renderCardTextHtml(text)` | `(string) => string` | 卡牌描述 → 带关键词标记的 HTML（已转义，可安全插入） |
+| `data/first.json` | 浏览器 | 首屏：meta + 第一页 200 张 + 11 个英雄卡（1 个静态请求，可缓存 1 小时） |
+| `data/cards-lite.json` | Functions | 全量索引，筛选/排序/分页/详情都在这里算；用户端从不下载 |
+| `data/meta.json` | Functions + 首屏包 | 枚举中文映射、58 个系列、图床前缀 |
+| `data/cards-signatures.json` | 浏览器 | 哪些卡有异画（460 条），决定详情页「看异画」按钮 |
 
-检索示例：
+`meta.json` 结构：
 
-```js
-const r = searchCards("火", {}, 0, 3, "default");
-// { total: 1315, cards: [炽热连击, 怒火中烧, 突破邪火], offset: 0, shown: 3 }
-
-// 筛选：法师的随从，按费用从高到低
-searchCards("", { cardClass: ["MAGE"], type: ["MINION"] }, 0, 20, "cost-desc");
-
-// 只查可收藏
-searchCards("", { collectible: ["yes"] }, 0, 20, "default");
-```
-
-`filters` 支持的维度：`cardClass` `type` `rarity` `race` `spellSchool` `set` `cost`（`0`…`9`、`10plus`） `collectible`（`yes`/`no`），值统一传数组。
-
-`sort` 取值：`default` `cost-asc` `cost-desc` `attack-asc` `attack-desc` `health-asc` `health-desc` `name` `new`。
-
-### 卡牌对象长什么样
-
-`searchCards` / `DB.cards` 返回的是原始卡牌记录（58 个字段，字段含义同 [hearthstonejson](https://hearthstonejson.com/)），常用字段：
-
-```json
+```jsonc
 {
-  "dbfId": 315, "id": "CS2_029", "name": "火球术",
-  "cardClass": "MAGE", "type": "SPELL", "rarity": "FREE", "set": "CORE",
-  "cost": 4, "text": "造成 <b>6</b> 点伤害。",
-  "spellSchool": "FIRE", "mechanics": ["AFFECTED_BY_SPELL_POWER"],
-  "collectible": true, "artist": "Ralph Horsley"
+  "version": 2,
+  "source": "official-json",
+  "counts": { "total": 36390 },
+  "sets": [ { "group": "基础与经典", "items": [["BASIC", "基础"], ...] }, ... ],  // 5 组 / 58 系列
+  "maps": {                                                                       // 143 条翻译
+    "class": 13, "rarity": 5, "type": 20, "set": 69, "race": 27, "spellSchool": 9
+  },
+  "imageBase": { "256": ".../256x/", "512": ".../512x/", "orig": ".../orig/" }
 }
 ```
 
-访问索引：
+系列分组：基础与经典 7、冒险模式 4、正式系列 36、活动 / 特殊 8、游戏模式 3 = **58 个系列**。
 
-```js
-DB.byId.get("CS2_029")     // 按 cardId
-DB.byDbf.get(315)          // 按 dbfId
-DB.cards                   // Map<cardId, card>
-DB.cards.size              // 36390
-```
+> 💡 出新系列时**只需改 `data/meta.json`**，不用动一行代码。
 
 ---
 
-## 4. 集成方式二：`iframe` 嵌入
+## 🔄 更新卡库
 
-页面没有 URL 参数，默认停在「组卡器」；需要别的页面就让用户点顶部导航。
-
-```html
-<iframe src="https://hstool.pages.dev/"
-        style="width:100%;height:900px;border:0"
-        title="HsTool"></iframe>
-```
-
-因为整站是纯静态 + 同源数据，`iframe` 之间没有跨域限制；父页面若要读子页面的 `encodeDeckstring` 等函数，需同源（自己部署一份）。
-
----
-
-## 5. 集成方式三：只要卡牌数据
-
-```js
-const cards = await (await fetch("/data/hearthstone_cards_zhCN.json")).json();
-const meta  = await (await fetch("/data/cards-meta.json")).json();
-```
-
-- `hearthstone_cards_zhCN.json`：数组，36,390 条，原始字段（含酒馆战棋、佣兵等非对战数据）。
-- `cards-meta.json`：`{counts:{total}, sets:[{key,name,groups[]}], maps:{cardClass,rarity,type,set,race,spellSchool}}`，中文字名与排序都在 `maps` 里。
-- 想只取对战可收藏卡：`cards.filter(c => c.collectible)` → 8,015 条。
-
-数据更新：仓库内 `.github/workflows/` 有定时任务，会从 `api.hearthstonejson.com/v1/latest` 重新拉取并提交（目前约每 10 小时）。
-
----
-
-## 6. 集成方式四：只想照抄 deckstring 编解码
-
-规范（官方 `hearthstone-deckstrings`）不长，照着写大约 80 行：
+卡牌数据来自 [HearthstoneJSON](https://hearthstonejson.com/)，官方构建地址：
 
 ```
-base64 → 字节流，按 varint（7 位一组，最高位为续位）依次读：
-
-0x00            header（固定 0）
-1               version
-1 | 2           format（1 狂野 / 2 标准）
-n               hero 数量，随后 n 个 dbfId
-                —— 主卡组：三段，每段「条数 + 若干 dbfId」
-A               1 张段条数，随后 A 个 dbfId
-B               2 张段条数，随后 B 个 dbfId
-C               3 张及以上段条数，随后 C 组「dbfId, 份数」
-                —— 乐队（sideboard）：
-0 | 1           是否存在
-（若存在）与主卡组同构的三段，但每张卡后面额外跟一个「归属卡 dbfId」
+https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json   # 仅可收藏
+https://api.hearthstonejson.com/v1/latest/zhCN/cards.json              # 全量（本项目用这个）
 ```
 
-三个坑：
+日常不用手动做：`.github/workflows/update-cards.yml` 每 6 小时跑一次，比对指纹 →
+有变化就重建 `cards-lite.json` 与 `first.json` 并提交，CF Pages 自动重新部署。
 
-1. **乐队不是「1 + 条数 + (卡, 归属)」**，而是和主卡组一样的三段（1 张段 / 2 张段 / 3+ 张段）。写成前一种，乐队里两张相同的卡会被游戏读成「两条单卡」。
-2. 3 张及以上段才显式写份数，1 张段和 2 张段不写。
-3. 没有乐队也必须写一个 `0`。
-
-本仓库实现见 `js/app.js` 中的 `encodeDeckstring` / `decodeDeckstring`（`writeVarint` / `readVarint` 在文件开头，`bytesToB64` / `b64ToBytes` 用 `btoa` / `atob`）。
-
----
-
-## 7. 图片
-
-| 用途 | 地址 | 注意 |
-| --- | --- | --- |
-| 卡面渲染图 | `https://art.hearthstonejson.com/v1/render/latest/zhCN/256x/{cardId}.png` | **不返回 `Access-Control-Allow-Origin`**，`<img>` 能显示，但 `canvas` 会污染（`toBlob` 抛 `SecurityError`） |
-| 方形插画 | `https://art.hearthstonejson.com/v1/512x/{cardId}.jpg` | 同上；体积小（30 KB 级），适合列表 |
-| 异画（签名版） | wiki 的 `{cardId}_Premium3.png` | wiki 有防盗链，直接 `<img>` 可能 403 |
-
-要在 `canvas` 里画卡图/生成长图，必须走同源代理：本站自带两个（见 `functions/api/`，Cloudflare Pages Functions）：
-
-```
-GET /api/card-img?u=render%2Flatest%2FzhCN%2F256x%2FCS2_029.png
-GET /api/hs-signature?card=BE_013&w=512
-```
-
-前者加了 `Access-Control-Allow-Origin: *` 与一年 immutable 缓存；后者按 wiki 的四种文件名依次回退。自己部署时若不用 Cloudflare，需要另写一个同样形状的代理。
-
----
-
-## 8. 常见问题
-
-**双击 `index.html` 打不开/卡在加载？** 必须走 HTTP。浏览器在 `file://` 下会禁止 `fetch` 本地 JSON。
-
-**本地起服务：**
+手动重建（本地）：
 
 ```bash
-python -m http.server 8080      # 或 npx serve
-# 打开 http://127.0.0.1:8080/
+CARD_SOURCE=/path/to/cards.json node scripts/build-index.mjs
 ```
 
-**中文目录名会不会出问题？** 不会，站点自身不做路径拼接，只按相对路径取 `data/`。
-
-**卡牌数据里为什么有酒馆战棋/佣兵的卡？** 上游是原始全量数据；界面里通过 `collectible` 过滤，默认只显示可收藏卡。
-
-**关键词提示的文案哪来的？** 游戏内官方文案（`HearthSim/hsdata` 的 `Strings/zhCN/GLOBAL.txt`），共 200 余条，见 `js/app.js` 的 `KEYWORD_DEFS`。
-
-**卡组上限（20/30/40 张）怎么算的？** `DECK_SIZE_RULES` 表：裂魂者阿扎莉娜 20、雷纳索尔王子与时空大盗拉法姆 40，多张冲突时取最严格的。
+新系列的中文名需要人工补进 `data/meta.json` 的 `sets` 与 `maps.set`，否则界面会显示英文代码。
 
 ---
 
-## 9. 许可与来源
+## 🧱 技术栈与兼容性
 
-- 代码：见 `LICENSE`。
-- 卡牌数据：[hearthstonejson](https://hearthstonejson.com/)，暴雪娱乐版权所有，本项目仅作展示。
-- 关键词文案：[HearthSim/hsdata](https://github.com/HearthSim/hsdata)（游戏内文本）。
-- deckstring 规范：[HearthSim/python-hearthstone-deckstrings](https://github.com/HearthSim/python-hearthstone-deckstrings)。
+| 层面 | 方案 |
+| --- | --- |
+| 结构 / 样式 / 逻辑 | 原生 HTML + CSS + JavaScript，**无框架、无构建步骤** |
+| 数据层 | `fetch` 静态 JSON，内存建 `Map` 索引 |
+| 卡图 | [HearthstoneJSON](https://hearthstonejson.com/) 官方图床 |
+| 字体 | Belwe |
+| 托管 | Cloudflare Pages（全球 CDN） |
+
+**浏览器要求**：支持 ES2017 的现代浏览器 —— Chrome / Edge ≥ 80、Firefox ≥ 78、Safari ≥ 14。
+代码刻意不使用 `??`、`?.`、`Object.hasOwn`、`replaceAll` 等新语法，以兼容较老的 WebView 与 WebView 内核浏览器。
+
+**不支持**：IE 11 及任何不支持 `IntersectionObserver` 的内核。
+
+---
+
+## ⚡ 性能
+
+| 指标 | 实测 |
+| --- | --- |
+| 卡库体积 | 10.9 MB（Brotli 后约 1.2–1.8 MB） |
+| 首次加载 | 2–3 秒（视网络） |
+| 二次加载 | 走 HTTP 缓存，< 1 秒 |
+| 搜索 36,022 张 | 单页 200 条，内存过滤，无网络请求 |
+| 首屏卡图 | 仅加载视口内约 30 张 |
+
+---
+
+## ❓ 常见问题
+
+**为什么不用后端？**
+
+卡库只读且体积可控，交给浏览器本地索引后所有查询都是内存操作，延迟趋近于 0，同时省去服务器与运维成本。
+
+**为什么卡图加载看起来慢？**
+
+卡图来自外部图床，单张约 138 KB，浏览器同域并发上限 6。已通过懒加载把首屏控制在 2–3 秒。
+
+**首次加载为什么要等？**
+
+首屏只下 `data/first.json`（约 109 KB，Brotli 后 ~25 KB，可缓存 1 小时），不下载 11 MB 卡库；
+搜索、筛选、排序、翻页、详情由边缘函数按需计算。
+
+**为什么搜不到某张卡？**
+
+本项目使用官方全量原始数据（含战棋 / 佣兵 / 附魔 / 英雄皮肤与全部衍生 token），正常不会漏卡。
+搜不到时先看 `GET /api/status` 是否 `ready:true`（索引没建起来时列表只有首屏那 200 张）。
+
+**卡组代码解不出来？**
+
+先确认短码完整。若粘贴的是中文笔记或含多余字符，工具会自动降级尝试「官方格式文本」解析；仍失败会给出具体原因。
+
+---
+
+## ⚠️ 已知限制
+
+- 卡库体积决定了首屏无法做到「秒开」，这是纯静态方案的固有代价
+- 卡图依赖第三方图床，图床不可达时只能显示占位卡背
+- 英雄选择器只提供 11 个基础职业英雄，不含皮肤
+- 设置存于 `localStorage`，换浏览器 / 清缓存后需重设
+- 无 PWA / 离线模式（未注册 Service Worker）
+
+---
+
+## 🙏 致谢与声明
+
+- [HearthstoneJSON](https://hearthstonejson.com/) —— 卡牌数据与卡图图床
+- [Cloudflare Pages](https://pages.cloudflare.com/) —— 静态托管
+- [Blizzard Entertainment](https://www.blizzard.com/) —— 炉石传说
+
+本项目为**非官方**粉丝作品，与 Blizzard Entertainment 无任何关联。
+
+### 许可证
+
+| 对象 | 授权 |
+| --- | --- |
+| 本项目源代码（`index.html`、`css/`、`js/`） | **MIT**，全文见 [LICENSE](./LICENSE) |
+| 卡牌数据（`data/*.json`） | 来自 [HearthstoneJSON](https://hearthstonejson.com/)，遵循其原始条款 |
+| 卡图、`Belwe.ttf`、Blizzard 相关素材 | 版权归 Blizzard Entertainment，**不在 MIT 覆盖范围内**，不得商用 |
+
+MIT 只授予你使用、修改、分发本项目**代码**的权利；素材版权未随之转移。
