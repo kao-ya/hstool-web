@@ -3227,9 +3227,10 @@ body.no-border .kw-tip { border-color: transparent; }
     background-image: url("../img/manacrystal.png");
     /* 水晶图在 52px 盒里显得偏大：只把图画小一圈，盒子尺寸保持不变，
        否则法力块会比攻击/生命矮一截，四个标签不齐。 */
-    background-size: 44px 44px;
-    /* 水晶图在源图里重心偏上，单独往下压 4px（只动图，不动文字） */
-    background-position: center calc(50% + 4px);
+    background-size: 40px 40px;
+    /* 水晶图在源图里重心偏上，单独往下压（只动图，不动文字）。
+       40px 图在 52px 盒里居中留 6px 上下余量，压 5px 仍不会碰到盒子下沿。 */
+    background-position: center calc(50% + 5px);
   }
   .detail-stat.stat-attack .stat-icon { background-image: url("../img/stat-attack.png"); }
   .detail-stat.stat-health .stat-icon { background-image: url("../img/stat-health.png"); }
