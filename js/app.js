@@ -818,7 +818,8 @@ function lookupBatch(keys) {
         if (nc.name && !DB.byName.has(nc.name)) DB.byName.set(nc.name, nc);
         if (c.id) cardCache.set(nc.dbfId, nc);
       }
-      for (const w of waiters) w(cards);
+      const normalized = cards.map(function (c) { return c && c.dbfId ? (DB.extra.get(c.dbfId) || c) : c; });
+      for (const w of waiters) w(normalized);
     }, 25);
   });
 }
@@ -2106,8 +2107,14 @@ async function fetchCardInfo(dbfId) {
   if (cardCache.has(dbfId)) return cardCache.get(dbfId);
   try {
     const c = await api("/api/cards/detail", { dbfId });
-    cardCache.set(c.dbfId, c);
-    return c;
+    // 注意：服务端记录的字段是 attached，必须过一遍 normalizeCard 才有 attached_dbf，
+    // 否则奇闻卡的附属 token 永远是空数组（附属卡进不了卡组）。
+    const nc = normalizeCard(c);
+    cardCache.set(nc.dbfId, nc);
+    if (c.dbfId) DB.extra.set(nc.dbfId, nc);
+    if (nc.id) DB.byId.set(nc.id, nc);
+    if (nc.name && !DB.byName.has(nc.name)) DB.byName.set(nc.name, nc);
+    return nc;
   } catch (e) {
     return null;
   }
@@ -3719,9 +3726,18 @@ async function addCardToDeck(card) {
     return;
   }
 
-  // 附属卡（奇闻 token / 奇利亚斯模块）不再进入卡组列表：
-  // 它们只作为详情页的「附属卡」展示，不占卡位、不出现在右侧列表里。
+  // ========== 奇闻卡：先算出实际会新增的附属 token ==========
+  // （排除名单里的 token 不占卡位；先取好信息，上限校验与实际加入一致）
   const attachedToAdd = [];
+  for (const aDbf of (card.attached_dbf || [])) {
+    if (deckState.cards.has(aDbf)) continue;       // 已经在卡组里就跳过
+    let aCard = cardCache.get(aDbf);
+    if (!aCard) aCard = await fetchCardInfo(aDbf); // 不在缓存则问后端要
+    if (!aCard) continue;
+    if (EXCLUDED_ATTACHED_NAMES.has(aCard.name)) continue;
+    attachedToAdd.push({ dbfId: aDbf, card: aCard });
+  }
+  // ============================================================
 
   // 卡组总张数上限：按加入这张卡后的上限校验（这张卡自身可能就是规则卡）
   // 奇闻卡的附属 token 也占卡位，按实际会新增的 token 数预估
