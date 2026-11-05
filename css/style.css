@@ -534,9 +534,12 @@
     color: var(--nav-text); font-size: 18px;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s;
+    transform-origin: center center;
+    will-change: transform;
+    transition: background-color 0.2s, transform 0.2s;
   }
   .theme-toggle:hover { background: var(--nav-hover-bg); transform: scale(1.1); }
+  .theme-toggle:active { transform: scale(0.96); }
 
   .status {
     display: flex; align-items: center; gap: 7px;
@@ -2250,9 +2253,11 @@
     width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--outline);
-    transition: left var(--motion-medium), top var(--motion-medium),
+    transition: left var(--motion-short), top var(--motion-short),
                 width var(--motion-short), height var(--motion-short),
-                background var(--motion-short);
+                background var(--motion-short), transform var(--motion-short);
+    /* 放大以自身中心为原点：左右/上下各扩一半，位置不变 */
+    transform-origin: center center;
   }
   /* 圆点（选中：放大到 24px 并右移，保持四周留白一致） */
   .md3-switch input:checked + .md3-switch-track {
@@ -2265,13 +2270,13 @@
     width: 24px; height: 24px;
     background: #ffffff;
   }
-  /* 按住时圆点拉长到 26px */
+  /* 按住时圆点原地放大（只改 transform，不动 top/left/尺寸，
+     否则尺寸与位移的过渡时长不一致会让圆心先往下沉再回来） */
   .md3-switch input:active + .md3-switch-track::after {
-    top: 1px;
-    width: 26px; height: 26px;
+    transform: scale(1.14);
   }
   .md3-switch input:checked:active + .md3-switch-track::after {
-    left: 20px;
+    transform: scale(1.14);
   }
   .md3-switch input:focus-visible + .md3-switch-track {
     outline: 2px solid var(--primary);
@@ -2828,7 +2833,10 @@ body.no-border .kw-tip { border-color: transparent; }
   background: rgba(12, 9, 7, .9); color: #d8cbb6;
   border: 1px solid rgba(230, 183, 97, .35); border-radius: 10px;
   font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); overflow: hidden; backdrop-filter: blur(2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); overflow: hidden;
+  /* 不要用 backdrop-filter：固定定位 + 背景滤镜会让 Chrome 建整页快照层，
+     滚动时出现「中部到底部一片空白」的重绘残影。改为不透明背景即可。 */
+  contain: layout paint;
 }
 #loadLog.collapsed .load-log-body { display: none; }
 .load-log-head {
