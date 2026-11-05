@@ -3290,34 +3290,51 @@ body.no-border .kw-tip { border-color: transparent; }
     letter-spacing: 0.06em;
   }
 
-  /* —— 属性「纯文字」模式（设置 → 功能 → 属性用图片 关闭时）——
-     完全去掉底图，四个属性退化成一行「标签 数值」，不再有描边和位移补正。 */
-  body.stat-text-only .detail-stats { gap: 16px; }
+  /* —— 属性「小卡片」模式（设置 → 功能 → 属性用图片 关闭时）——
+     还原成加图片之前的老样式：灰底 + 细边框的小卡片，标签在上、数值在下。
+     数值与标签的字号/字重/颜色都照抄 6c90909 那版（.label 11px 灰、.value 13px 加粗） */
+  body.stat-text-only .detail-stats { gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
   body.stat-text-only .detail-stat.stat-mana,
   body.stat-text-only .detail-stat.stat-attack,
   body.stat-text-only .detail-stat.stat-health,
   body.stat-text-only .detail-stat.stat-durability {
-    flex-direction: row;
-    justify-content: flex-start;  /* 左对齐，不随标签长度跳位，也不撑满整行 */
-    align-items: baseline;
-    gap: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
     min-width: 0;
-    padding: 0;
+    background: var(--inner);
+    border: 1px solid var(--border);
+    border-radius: var(--shape-sm);
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  /* DOM 是「数值 标签」，用 order 摆成标签在上、数值在下 */
+  body.stat-text-only .detail-stat .label {
+    display: block;
+    order: 1;
+    font-size: 11px;
+    color: var(--muted-light);
+    letter-spacing: 0;
   }
   body.stat-text-only .detail-stat .stat-icon {
+    display: block;
+    order: 2;
     width: auto;
     height: auto;
-    display: inline-block;
     background-image: none !important;
     filter: none;
-    /* DOM 顺序是 value 在 label 前，用 order 换回「攻击 3」的读法 */
-    order: 2;
   }
   body.stat-text-only .detail-stat .stat-icon .value {
+    display: block;
     transform: none !important;   /* 底图没了，原先那点视觉补正反而会歪 */
-    font-size: 22px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    letter-spacing: 0;
     color: var(--text);
     text-shadow: none;
   }
-  body.stat-text-only .detail-stat .label { font-size: 13px; order: 1; }
 
