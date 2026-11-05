@@ -2019,16 +2019,12 @@
        注意：这条只负责撑住尺寸，与下面的「预览图背景」开关无关。 */
     aspect-ratio: 256 / 372;
   }
-  /* 「悬停预览滑动」开关（body.hover-slide）：换卡时新卡图从左侧滑入。
-     只在换卡时挂 .slide-in（见 showCardHoverPreview），首次弹出不播，
-     避免和浮层自己的 opacity 淡入叠在一起显得抖。 */
-  body.hover-slide .global-hover-preview img.slide-in {
-    animation: hoverPreviewSlide 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
-  }
-  @keyframes hoverPreviewSlide {
-    from { opacity: 0; transform: translateX(-18px) scale(0.98); }
-    60%  { opacity: 1; }
-    to   { opacity: 1; transform: translateX(0) scale(1); }
+  /* 「悬停预览滑动」开关（body.hover-slide）：
+     上面 .global-hover-preview 里的 left/top/opacity 过渡就是"滑动"本身——
+     在列表里上下移动鼠标时预览框顺滑跟着走。关掉开关 = 去掉这层过渡，
+     预览框直接跳到新位置，观感与「减弱动效」打开时完全一致。 */
+  body:not(.hover-slide) .global-hover-preview {
+    transition: none;
   }
 
   /* 「预览图透明」= ON → 去掉上面的占位底板（默认 OFF = 显示底板）。
