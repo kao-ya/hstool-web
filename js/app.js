@@ -927,7 +927,6 @@ async function loadCardDatabase() {
       DB.fullLoadSeconds = DB.loadSeconds;
       loadLog("ok", "服务端模式：首屏 " + boot.cards.length + " 张 / 共 " + boot.total +
         " · " + Math.round(performance.now() - t0) + "ms");
-      if (typeof scheduleDeckThumbs === "function") scheduleDeckThumbs(200);
       scheduleNameRanks();
       // 英雄卡：静态首屏包里已经带上（省掉 2 个往返），缺失时才按 id 批量补
       try {
@@ -3161,7 +3160,7 @@ function createCardElement(card, index) {
   img.decoding = "async";
   img.alt = card.name;
   img.dataset.cardId = card.id;
-  setArt(img, cardImgUrl(card, "256x"));
+  img.src = cardImgUrl(card, "256x");
   // 首屏前 eagerCount 张立即加载（保证首屏无白图），其余交给 IntersectionObserver。
   // eagerCount 由 doCardSearch 按容器尺寸在每次渲染前算好，搜索与筛选走同一套逻辑。
   const eager = (index === undefined) || (index < cardImgEagerCount);
@@ -3519,7 +3518,7 @@ async function renderDetailAttached(card) {
     img.loading = "lazy";
     img.alt = ac.name;
     img.dataset.cardId = ac.id;
-    setArt(img, cardImgUrl(ac, "256x"));
+    img.src = cardImgUrl(ac, "256x");
     // 中文图失败回退英文图，再失败用本地占位图（并把「无图」记入缓存）
     img.addEventListener("error", function() {
       cardImgErr(this, this.dataset.cardId, "256x");
@@ -3720,18 +3719,9 @@ async function addCardToDeck(card) {
     return;
   }
 
-  // ========== 奇闻卡：先算出实际会新增的附属 token ==========
-  // （排除名单里的 token 不占卡位；先取好信息，上限校验与实际加入一致）
+  // 附属卡（奇闻 token / 奇利亚斯模块）不再进入卡组列表：
+  // 它们只作为详情页的「附属卡」展示，不占卡位、不出现在右侧列表里。
   const attachedToAdd = [];
-  for (const aDbf of (card.attached_dbf || [])) {
-    if (deckState.cards.has(aDbf)) continue;       // 已经在卡组里就跳过
-    let aCard = cardCache.get(aDbf);
-    if (!aCard) aCard = await fetchCardInfo(aDbf); // 不在缓存则问后端要
-    if (!aCard) continue;
-    if (EXCLUDED_ATTACHED_NAMES.has(aCard.name)) continue;
-    attachedToAdd.push({ dbfId: aDbf, card: aCard });
-  }
-  // ============================================================
 
   // 卡组总张数上限：按加入这张卡后的上限校验（这张卡自身可能就是规则卡）
   // 奇闻卡的附属 token 也占卡位，按实际会新增的 token 数预估
@@ -4011,11 +4001,12 @@ function createDeckRow(entry, isAttached, bandOwnerDbfId) {
     // 行底图用**插画**：art.hearthstonejson.com 的 512×512 方图（无卡框、无文字），
     // 比带卡框的卡面渲染更像「官方组卡器的那条彩色横条」。
     // 取不到时逐级退回：插画 → 中文卡面 → 英文卡面 → 隐藏（让行底色透出来）。
-    setArt(bg, heroIllustrationUrl(card.id));
+    bg.src = heroIllustrationUrl(card.id);
+    warmShatterArt(card);
     bg.onerror = function() {
       const step = this.dataset.artStep || "0";
-      if (step === "0") { this.dataset.artStep = "1"; setArt(this, heroIllustrationUrlFallback(card)); return; }
-      if (step === "1") { this.dataset.artStep = "2"; setArt(this, enCardImgUrl(card.id, "256x")); return; }
+      if (step === "0") { this.dataset.artStep = "1"; this.src = cardImgUrl(card, "256x"); return; }
+      if (step === "1") { this.dataset.artStep = "2"; this.src = enCardImgUrl(card.id, "256x"); return; }
       this.style.display = "none";
     };
   }
@@ -4203,29 +4194,6 @@ function renderDeckCards() {
 // ============================================================
 const globalHoverPreview = document.getElementById("globalHoverPreview");
 const globalHoverImg = document.getElementById("globalHoverImg");
-
-// 卡面/插画内存缓存：同一个 URL 在页内只发起一次请求。
-// art.hearthstonejson.com 的 jpg 不带 cache-control（等于「每次都得重新下」），
-// 所以这里用常驻 Image 把资源钉在内存里，后面所有 <img> 复用同一个 URL 就命中内存缓存。
-const artMem = new Map();
-const ART_MEM_MAX = 240;
-function memArt(url) {
-  if (!url) return null;
-  let im = artMem.get(url);
-  if (im) { artMem.delete(url); artMem.set(url, im); return im; }
-  im = new Image();
-  im.decoding = "async";
-  im.src = url;
-  artMem.set(url, im);
-  while (artMem.size > ART_MEM_MAX) artMem.delete(artMem.keys().next().value);
-  return im;
-}
-// 给 <img> 装上 src，同时确保这份资源已经在内存缓存里
-function setArt(img, url) {
-  if (!img || !url) return;
-  memArt(url);
-  img.src = url;
-}
 
 // 悬停预览的图缓存。
 // 以前是把 #globalHoverImg 的 src 直接改成新卡 —— 换卡瞬间旧请求被浏览器取消，
@@ -4501,11 +4469,6 @@ function closeHeroSelector() {
 const HERO_ART_BASE = "https://art.hearthstonejson.com/v1/";
 function heroIllustrationUrl(cardId) {
   return cardId ? HERO_ART_BASE + "512x/" + cardId + ".jpg" : "";
-}
-// 插画取不到时的第 1 级回退：优先 256x 插画（体积只有 512x 的 1/3），失败再由调用方退回卡面
-function heroIllustrationUrlFallback(card) {
-  if (!card || !card.id) return "";
-  return "https://art.hearthstonejson.com/v1/256x/" + card.id + ".jpg";
 }
 function heroRenderUrl(cardId, loc) {
   return cardId ? HERO_ART_BASE + "render/latest/" + (loc || "zhCN") + "/512x/" + cardId + ".png" : "";
@@ -6148,7 +6111,7 @@ const ParticleFX = (function () {
 
   let snapT0 = 0;
   let resolveDone = null;   // 动画结束通知（clearDeck 等它收尾再重建列表）
-  let snapDur = 700;
+  let snapDur = 520;
   let snapFront = 0;
   const FRONT_BAND = 0.07;
 
@@ -6279,8 +6242,8 @@ const ParticleFX = (function () {
       const win = rowWindow(bmp.width, bmp.height, cssW, cssH);
       octx.drawImage(bmp, win.sx, win.sy, win.sw, win.sh, 0, 0, cssW, cssH);
     } else {
-      octx.fillStyle = tint;
-      octx.fillRect(0, 0, cssW, cssH);
+      // 拿不到卡图时什么都不画：以前铺的是兜底色块（第一个就是金色），
+      // 前沿扫过去时看起来就像一道"金色扫光"，这是用户报的扫光来源。
     }
 
     // 再复制一份「干净的」原图：off 会被逐格擦掉，而飞出去的碎块还得从原图取像。
@@ -6315,16 +6278,20 @@ const ParticleFX = (function () {
     for (let gy = 0; gy < rowsN; gy++) {
       for (let gx = 0; gx < cols; gx++) {
         let color = tint;
-        let invisible = false;
+        let invisible = !px;   // 没取到像素（无卡图）→ 这格不产生碎块
         if (px) {
           const i = (gy * cols + gx) * 4;
           if (px[i + 3] < 20) invisible = true;
           else color = "rgb(" + px[i] + "," + px[i + 1] + "," + px[i + 2] + ")";
         }
         // 改成「整体一起碎」：不再有右下→左上的方向性，所有格子在一个很窄的
-        // 时间窗内（n ∈ 0.10~0.52）陆续碎掉，靠噪声成团，看起来是一整块同时炸开。
-        const noise = (fbm2(gx * 0.37 + idx * 1.7, gy * 0.41) + 1) * 0.5;
-        const n = 0.10 + noise * 0.42;
+        // 时间窗内（n ∈ 0.02~0.98）陆续碎掉，靠噪声成团，看起来是一整块同时炸开。
+        // fbm2 本身已经是 0~1（hash→fract→双线性插值），不要再 (x+1)/2，
+        // 否则阈值会被整体抬到 0.5 以上，看起来就是「点了没反应，半秒后才炸」。
+        const noise = fbm2(gx * 0.37 + idx * 1.7, gy * 0.41);
+        // 阈值铺满 0~1：点下清空的第一帧就有一批格子飞出去（不再空等 250ms），
+        // 同时保持"整体炸开"的观感（噪声成团，不是一条从左到右的直线）。
+        const n = 0.02 + noise * 0.96;
         const life = 380 + Math.random() * 260;
         // 被列表边缘裁到的行：可见带以外的格子不派碎块（否则碎块会从列表外冒出来）
         const cy = rect.top + (gy + 0.5) * ch * ky;
@@ -6408,7 +6375,7 @@ const ParticleFX = (function () {
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       if (!row.el) continue;
-      const cut = Math.min(1, Math.max(0, snapFront / 0.52));
+      const cut = Math.min(1, Math.max(0, snapFront));
       // 按格子宽度量化（每行约 40 格 ≈ 2.5%）：文字/水晶一格一格被切掉，与卡面边界对齐
       const cutPct = Math.round(cut * 40) / 40 * 100;
       if (row.clipPct === cutPct) continue;
@@ -6542,6 +6509,8 @@ const ParticleFX = (function () {
       it.clipPct = 0;
     }
     ensureCanvas();
+    // 晚到的行不再压缩阈值：阈值本来就在 0~1 均匀铺开，
+    // 压缩会把它们全挤到"当前前沿之后"，看起来像要等半秒才碎。
     for (let i = 0; i < list.length; i++) rows.push(list[i]);
     if (!raf) { lastT = 0; raf = requestAnimationFrame(frame); }
   }
@@ -6586,7 +6555,7 @@ const ParticleFX = (function () {
     const built = new Array(ready.length);
     const donePromise = new Promise(function (res) { resolveDone = res; });
     // 兜底：卡图一个都没回来时，1.5s 后照样起播（用兜底色块），不能一直干等
-    const kick = setTimeout(function () { start(); }, 900);
+    const kick = 0;   // 立即起播：点击清空就当帧破碎，不再等卡图
 
     function start() {
       if (started) return;
@@ -6594,7 +6563,7 @@ const ParticleFX = (function () {
       clearTimeout(kick);
       // 让侧栏整块浮到 canvas 之上（名字/水晶/遮罩才能在消散时被裁掉）
       document.body.classList.add("fx-snapping");
-      snapDur = 700;
+      snapDur = 520;
       snapFront = 0;
       snapT0 = performance.now();
     }
@@ -6606,13 +6575,8 @@ const ParticleFX = (function () {
       // 关键：所有行共用同一个时钟。谁先回来就先画上去（DOM 那层还撑着，看不出来），
       // 但要等「全部就绪」或「首行就绪后再等 550ms」才开播 —— 否则每行各自起播，
       // 看到的效果是一行一行依次化掉，而不是一条统一从右下扫向左上的对角线。
-      if (remaining <= 0) {
-        clearTimeout(kick);
-        start();
-      } else if (!started && performance.now() - firstSettleAt > 550) {
-        clearTimeout(kick);
-        start();
-      }
+      // 立即起播：谁先回来谁先画上去，不再等「全部就绪 / 550ms」
+      if (!started) start();
     }
 
     for (let i = 0; i < ready.length; i++) {
@@ -6624,6 +6588,18 @@ const ParticleFX = (function () {
           settled = true;
           built[idx] = makeRow(it.rect, bmp || null, tint, idx, it.el || null, it.band || null);
           built[idx].el = it.el || null;
+          built[idx].hadBmp = !!bmp;
+          if (!bmp && it.url) {
+            // 第一枪用的是兜底（无卡图）：真图后到时**允许补建**这一行，
+            // 否则这一行会静默消失（既没碎块也看不出发生了什么）。
+            posterPixLoad(artProxyUrl(it.url)).then(function (late) {
+              if (!late) return;
+              const rebuild = makeRow(it.rect, late, tint, idx, it.el || null, it.band || null);
+              rebuild.el = it.el || null;
+              for (let r = 0; r < rows.length; r++) if (rows[r] === built[idx]) { rows[r] = rebuild; break; }
+              built[idx] = rebuild;
+            }).catch(function () {});
+          }
           settle(idx);
         };
         if (!it.url) { finish(null); return; }
@@ -6631,6 +6607,7 @@ const ParticleFX = (function () {
         setTimeout(function () { finish(null); }, 800);
       })(ready[i], i);
     }
+    start();   // 立刻开播（卡图陆续回来后按同一时钟并入）
     return donePromise;
   }
 
@@ -6644,7 +6621,14 @@ const ParticleFX = (function () {
     }
     const withEl = rows.filter(function (r) { return !!r.el; }).length;
     const clipSample = rows.length && rows[0].el ? (rows[0].el.style.clipPath || "none") : "no-el";
-    return { n: dust.length, rows: rows.length, minY: mn === 1e9 ? null : Math.round(mn), maxY: mx, withEl: withEl, clipSample: clipSample, front: Math.round(snapFront * 100) };
+    let cellTotal = 0, cellInv = 0, rowBmp = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].hadBmp) rowBmp++;
+      const cs = rows[i].cells || [];
+      cellTotal += cs.length;
+      for (let k = 0; k < cs.length; k++) if (cs[k].invisible) cellInv++;
+    }
+    return { n: dust.length, rows: rows.length, minY: mn === 1e9 ? null : Math.round(mn), maxY: mx, withEl: withEl, clipSample: clipSample, front: Math.round(snapFront * 100), cellTotal: cellTotal, cellInv: cellInv, rowBmp: rowBmp };
   }
 
   return { deckExplode: deckExplode, supported: supported, debug: debug };
@@ -6762,6 +6746,23 @@ async function posterPreviewRefresh() {
 // ---------------- 清空粒子的卡图预取 ----------------
 // art.hearthstonejson.com 不返回 Access-Control-Allow-Origin，fetch 它必然失败，
 // 拿不到像素就没法把卡面切成灰。所以统一走我们自己的 /api/card-img 同源代理。
+// 破碎取样用的图：art 站的 512×512 插画本身**没有** CORS 头，canvas 取不了像素，
+// 必须走自家 /api/card-img 代理（同源 + 允许跨域 + 一年缓存）。
+// 卡一进右侧列表就顺手把它拉进浏览器缓存 —— 不清空时它只是躺在缓存里，
+// 点清空时 posterPixLoad 直接命中缓存，才能做到「点了就碎」。
+const shatterArtWarmed = new Set();
+function warmShatterArt(card) {
+  if (!card || !card.id) return;
+  if (!window.Image) return;
+  const key = String(card.id);
+  if (shatterArtWarmed.has(key)) return;
+  if (shatterArtWarmed.size > 600) shatterArtWarmed.clear();
+  shatterArtWarmed.add(key);
+  const im = new Image();
+  im.decoding = "async";
+  im.src = artProxyUrl(heroIllustrationUrl(card.id));
+}
+
 function artProxyUrl(u) {
   if (!u) return u;
   const m = /^https?:\/\/art\.hearthstonejson\.com\/v1\/(.+)$/.exec(u);
@@ -6793,94 +6794,6 @@ function prefetchDeckArt() {
   renderDeckCards = function () {
     const r = orig.apply(this, arguments);
     prefetchDeckArt();
-    return r;
-  };
-})();
-
-// ============================================================
-// 卡组缩略图预取（256px 卡面）
-//
-// 背景：悬停右侧列表里的某一行时，浮层才去取 256px 卡面。
-//   直接「导入卡组」时一行都没被悬停过，于是这十几～几十张卡面
-//   全部处于「未下载」状态，之后每一次悬停都要现等一趟网络。
-//
-// 做法：卡片一旦进入右侧列表（renderDeckCards 之后），就按低优先级
-//   把它们逐张拉进浏览器 HTTP 缓存；悬停时直接命中缓存，零等待。
-//
-// 优先级纪律（用户明确要求）：10 MB 卡库优先。
-//   · DB.ready 为假（卡库还在下载）→ 一张都不发，只挂一个 1200ms 的闹钟继续等；
-//     卡库就绪时会由 loadCardDatabase 主动叫醒。
-//   · 就绪后每 80ms 只发 2 张、fetchPriority=low —— 不和首屏抢带宽与连接。
-//   · 同一张卡只发一次（deckThumbDone），导入/增删卡导致的重排不会重复下载。
-// ============================================================
-const deckThumbDone = new Set();
-// 必须持有 Image 的引用：不持有的话，对象可能在请求发出前就被 GC，
-// 浏览器直接取消这次加载（实测：done 计数涨了、但网络面板一条请求都没有）。
-const deckThumbHold = new Set();
-let deckThumbQueue = [];
-let deckThumbTimer = 0;
-
-function deckThumbUrlOf(card) {
-  if (!card || isNoArtType(card)) return "";
-  if (!card.id) return "";
-  // 必须是「行底图真正会请求的那张」：以前这里预取 256x 卡面，而行底图用的是 512x 插画，
-  // 两者 URL 不同 → 预取等于白干，导入后行底图还是要现下。现在预取插画本身。
-  return heroIllustrationUrl(card.id);
-}
-
-function collectDeckThumbs() {
-  const seen = new Set();
-  const push = function (card) {
-    const u = deckThumbUrlOf(card);
-    if (!u || seen.has(u) || deckThumbDone.has(u)) return;
-    seen.add(u);
-    deckThumbQueue.push(u);
-  };
-  deckState.cards.forEach(function (e) { if (e && e.card) push(e.card); });
-  deckState.bands.forEach(function (band) {
-    band.forEach(function (e) { const c = bandEntryCard(e); if (c) push(c); });
-  });
-}
-
-function pumpDeckThumbs() {
-  deckThumbTimer = 0;
-  // 不再等 10 MB 卡库：缩略图自己就是低优先级请求（fetchPriority=low + 一次 2 张），
-  // 让浏览器按优先级自己排，没必要人为排在卡库后面（那会让空等时间变成串行）。
-  let sent = 0;
-  while (deckThumbQueue.length && sent < 2) {
-    const u = deckThumbQueue.shift();
-    if (deckThumbDone.has(u)) continue;
-    deckThumbDone.add(u);
-    const img = new Image();
-    deckThumbHold.add(img);
-    const release = function () { deckThumbHold.delete(img); };
-    img.onload = release;
-    img.onerror = release;
-    img.decoding = "async";
-    try { img.fetchPriority = "low"; } catch (e) {}
-    loadLog("img", "缩略图 " + u.replace(/^.*\//, ""));
-    img.src = u;
-    sent++;
-  }
-  if (deckThumbQueue.length) deckThumbTimer = setTimeout(pumpDeckThumbs, 80);
-}
-
-function scheduleDeckThumbs(delay) {
-  if (deckThumbTimer) return;
-  deckThumbTimer = setTimeout(function () {
-    deckThumbTimer = 0;
-    collectDeckThumbs();
-    pumpDeckThumbs();
-  }, typeof delay === "number" ? delay : 400);
-}
-
-(function () {
-  if (typeof renderDeckCards !== "function") return;
-  const prev = renderDeckCards;
-  renderDeckCards = function () {
-    const r = prev.apply(this, arguments);
-    // 等这一帧画完再排预取，别和列表重排抢主线程
-    scheduleDeckThumbs(400);
     return r;
   };
 })();
