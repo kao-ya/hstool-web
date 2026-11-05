@@ -3255,10 +3255,12 @@ body.no-border .kw-tip { border-color: transparent; }
       0 -1.5px 0 rgba(0, 0, 0, 0.85),
       0 0 10px rgba(0, 0, 0, 0.7);
   }
-  .detail-stat.stat-attack .stat-icon .value { transform: translate(3px, 5px); }
-  .detail-stat.stat-health .stat-icon .value { transform: translate(0, 2px); }
-  .detail-stat.stat-mana .stat-icon .value { transform: translate(0, -1px); }
-  .detail-stat.stat-durability .stat-icon .value { transform: translate(0, -1px); }
+  /* 三项数字统一压在同一高度：垂直位移全部 4px，只有攻击横向右移 4px
+     （攻击图标是斜放的剑，重心偏右，需要横向补正才看着居中） */
+  .detail-stat.stat-attack .stat-icon .value { transform: translate(4px, 4px); }
+  .detail-stat.stat-health .stat-icon .value { transform: translate(0, 4px); }
+  .detail-stat.stat-mana .stat-icon .value { transform: translate(0, 4px); }
+  .detail-stat.stat-durability .stat-icon .value { transform: translate(0, 4px); }
 
   .detail-stat.stat-mana .label,
   .detail-stat.stat-attack .label,
