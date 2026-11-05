@@ -1309,6 +1309,8 @@ const DEFAULT_SETTINGS = {
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
   statPicture:        true,   // 属性用图片（OFF = 详情里的法力/攻击/生命改回纯文字）
+  detail3d:           true,   // 详情页 3D 效果（OFF = 卡图不再跟随鼠标倾斜）
+  hoverSlide:         true,   // 悬停预览滑动（OFF = 换卡时预览图直接替换，无滑入动画）
   loadLog:            true,   // 显示加载日志浮层（调试用，可在设置→日志里关掉）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
@@ -1382,6 +1384,23 @@ function applySettings() {
   b.classList.toggle("crystal-mono", !settings.crystalColor);
   // 关闭「属性用图片」→ 详情四个属性块去掉底图，退化成「标签 数值」纯文字
   b.classList.toggle("stat-text-only", !settings.statPicture);
+  // 悬停预览滑动依附于悬停预览：主开关关掉时这个效果整体不生效
+  b.classList.toggle("hover-slide", settings.hoverSlide && settings.hoverPreview);
+  // 悬停预览关闭 → 把「悬停预览滑动」整行藏起来（功能都不可用了，留着只会误导）
+  const slideRow = document.getElementById("rowHoverSlide");
+  if (slideRow) slideRow.classList.toggle("hidden", !settings.hoverPreview);
+  // 关掉滑动时把残留的 .slide-in 摘掉：否则下次打开开关的第一帧会带着旧类的结束态
+  if (!(settings.hoverSlide && settings.hoverPreview)) {
+    const hi = document.getElementById("globalHoverImg");
+    if (hi) hi.classList.remove("slide-in");
+  }
+  // 关掉 3D 时把已经倾斜的卡图立刻扶正，否则要等下一次鼠标移出才回正
+  if (!settings.detail3d) {
+    document.querySelectorAll(".detail-img").forEach((el) => {
+      el.classList.add("settling");
+      el.style.transform = "";
+    });
+  }
   // 加载日志浮层：OFF 时整块隐藏（日志仍记录在内存里，重新打开就能看到历史）
   const logBox = document.getElementById("loadLog");
   if (logBox) logBox.style.display = settings.loadLog ? "" : "none";
@@ -3356,6 +3375,8 @@ function attachTiltEffect() {
   const maxTilt = 18;   // 最大旋转角度（度）
 
   const onMove = (e) => {
+    // 「详情页 3D 效果」关掉时完全不参与旋转（不改 transform，也就不会拖影/重栅格化）
+    if (!settings.detail3d) return;
     // 跟随鼠标：先撤掉「放下」用的慢速过渡，恢复 0.08s，避免拖影
     img.classList.remove("settling");
     const rect = img.getBoundingClientRect();
@@ -3943,6 +3964,9 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
   // 即使悬停的是同一张卡也会让图片瞬间清空重载（白闪）；
   // 配合上面 preview 的 display/opacity 切换，在列表里上下移动鼠标时就会"鬼畜"式闪烁。
   const nextSrc = cardImgUrl(cardId, "256x");
+  // 换卡前记录浮层是否已经显示：只有「换卡」才滑入，首次弹出不滑（否则会和淡入叠在一起）
+  const alreadyShown = globalHoverPreview.classList.contains("show") &&
+    globalHoverImg.dataset.cardId !== String(cardId);
   if (globalHoverImg.dataset.cardId !== String(cardId)) {
     globalHoverImg.dataset.cardId = String(cardId);
     globalHoverImg.dataset.triedEn = "";
@@ -3958,6 +3982,14 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
     globalHoverImg.removeAttribute("src");
     // 用 256x 缩略图，加载比 512x 快得多，预览窗宽 260px 刚好够用
     globalHoverImg.src = nextSrc;
+
+    // 「悬停预览滑动」：靠重播 CSS 动画实现。先摘掉类并读一次 offsetWidth
+    // 强制重排，否则连续换卡时浏览器会认为动画没结束、直接跳到最后状态。
+    if (settings.hoverSlide && alreadyShown) {
+      globalHoverImg.classList.remove("slide-in");
+      void globalHoverImg.offsetWidth;
+      globalHoverImg.classList.add("slide-in");
+    }
   }
 
   // 保持常显：不反复 add/remove show 类，避免面板在逐行切换时闪烁

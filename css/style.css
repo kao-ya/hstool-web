@@ -2019,6 +2019,18 @@
        注意：这条只负责撑住尺寸，与下面的「预览图背景」开关无关。 */
     aspect-ratio: 256 / 372;
   }
+  /* 「悬停预览滑动」开关（body.hover-slide）：换卡时新卡图从左侧滑入。
+     只在换卡时挂 .slide-in（见 showCardHoverPreview），首次弹出不播，
+     避免和浮层自己的 opacity 淡入叠在一起显得抖。 */
+  body.hover-slide .global-hover-preview img.slide-in {
+    animation: hoverPreviewSlide 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  @keyframes hoverPreviewSlide {
+    from { opacity: 0; transform: translateX(-18px) scale(0.98); }
+    60%  { opacity: 1; }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+  }
+
   /* 「预览图透明」= ON → 去掉上面的占位底板（默认 OFF = 显示底板）。
      尺寸由 img 的 aspect-ratio 保证，去掉底板不会造成塌陷闪烁。 */
   body.preview-transparent .global-hover-preview {
@@ -2385,6 +2397,10 @@
     overflow-y: auto;
     min-height: 0;
   }
+
+  /* .hidden 在文件前部定义，晚出现的 .settings-row{display:flex} 会盖掉它，
+     这里用「两个类」把优先级提上来（设置里「悬停预览滑动」整行靠它隐藏） */
+  .settings-row.hidden { display: none; }
 
   .settings-row {
     display: flex; align-items: center; justify-content: space-between;
