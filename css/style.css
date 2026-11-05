@@ -2421,7 +2421,11 @@
   .settings-row.is-group-head.is-solo {
     border-bottom-width: 1px;
     border-bottom-style: solid;
+    border-bottom-color: var(--border);   /* 上面的 border-bottom:none 把颜色重置成 currentColor 了 */
     padding-bottom: 14px;
+  }
+  body.no-border .settings-row.is-group-head.is-solo {
+    border-bottom-color: transparent;
   }
   /* 子行左侧那条竖线是 ::before 的底色画的，不归 border-color 管，单独让掉 */
   body.no-border .settings-row.is-sub::before {
