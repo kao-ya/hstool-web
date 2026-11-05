@@ -3950,6 +3950,12 @@ function showCardHoverPreview(cardId, anchorEl, mode) {
     top = window.innerHeight - ph / 2 - 8;
   }
 
+  // 「悬停预览滑动」开着时预览框整体向右让一点，别贴着列表边缘；
+  // 让完再修一次右边界，避免窗口窄时被推出屏幕。
+  if (settings.hoverSlide && settings.hoverPreview) {
+    left += 10;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+  }
   globalHoverPreview.style.left = left + "px";
   globalHoverPreview.style.top = top + "px";
   globalHoverPreview.style.transform = "translateY(-50%)";

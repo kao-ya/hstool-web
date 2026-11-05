@@ -2409,6 +2409,28 @@
   .settings-row-title { font-size: 14px; font-weight: 600; color: var(--text); }
   .settings-row-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
+  /* 「悬停预览滑动」是「悬停预览」的附属项：缩进 + 左侧竖线 + 小一号的字与开关，
+     父行去掉下边框、收紧下内边距，两行在视觉上合成一组。 */
+  .settings-row.is-group-head {
+    border-bottom: none;
+    padding-bottom: 2px;
+  }
+  .settings-row.is-sub {
+    position: relative;
+    padding: 2px 0 12px 26px;
+  }
+  .settings-row.is-sub::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 4px;
+    bottom: 12px;
+    width: 1px;
+    background: var(--border);
+  }
+  .settings-row.is-sub .settings-row-title { font-size: 12.5px; color: var(--muted-light); }
+  .settings-row.is-sub .settings-row-desc { font-size: 11.5px; }
+  .settings-row.is-sub .md3-switch { transform: scale(0.84); transform-origin: right center; }
   .settings-divider { height: 1px; background: var(--border); margin: 6px 0; }
 
   /* 设置页内的小标题（功能 / 布局 / 控件），与行内标题区分开 */
