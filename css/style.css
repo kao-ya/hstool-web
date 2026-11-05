@@ -2415,10 +2415,17 @@
     border-bottom: none;
     padding-bottom: 2px;
   }
-  /* 子行隐藏（悬停预览关闭）时没有下一行接着，父行要自己补回分割线 */
+  /* 子行隐藏（悬停预览关闭）时没有下一行接着，父行要自己补回分割线。
+     只补宽度与线型、不写颜色：颜色继续由 .settings-row 与 body.no-border 决定，
+     否则「去边框去线条」打开时这条线会单独漏出来。 */
   .settings-row.is-group-head.is-solo {
-    border-bottom: 1px solid var(--border);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
     padding-bottom: 14px;
+  }
+  /* 子行左侧那条竖线是 ::before 的底色画的，不归 border-color 管，单独让掉 */
+  body.no-border .settings-row.is-sub::before {
+    background: transparent;
   }
   .settings-row.is-sub {
     position: relative;
