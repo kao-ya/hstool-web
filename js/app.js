@@ -930,6 +930,18 @@ function deckSizeRuleOf(cardOrId) {
   return null;
 }
 
+// 某张卡是否与「卡组里已有的容量规则」互斥。
+// 例：卡组里已有 20 张规则的裂魂者阿扎莉娜时，40 张规则的雷纳索尔王子就是互斥的。
+// 普通卡（没有命中任何规则）永远不互斥；两条规则 size 相同也不算互斥（同是 40 张）。
+function conflictRuleFor(cardOrId) {
+  const self = deckSizeRuleOf(cardOrId);
+  if (!self) return null;
+  for (const r of deckSizeRulesInDeck()) {
+    if (r !== self && r.size !== self.size) return r;
+  }
+  return null;
+}
+
 // 卡组内命中的全部规则（去重）
 function deckSizeRulesInDeck() {
   const out = [];
@@ -3000,6 +3012,31 @@ function refreshCardBadge(div, dbfId) {
     badge.textContent = "×" + entry.count;
     div.appendChild(badge);
   }
+
+  // 状态遮罩：互斥 → 红；份数已达上限 → 黑灰
+  const card = (entry && entry.card) || cardCache.get(dbfId) || (DB.byDbf && DB.byDbf.get(dbfId));
+  let state = "";
+  let reason = "";
+  if (card) {
+    const clash = conflictRuleFor(card);
+    if (clash) {
+      state = "conflict";
+      reason = "与卡组中的「" + clash.name + "」互斥，不能同时携带";
+    } else if (entry && entry.count >= maxCopiesOf(card)) {
+      state = "exhausted";
+      reason = cardsAtLimitReason(card);
+    }
+  }
+  div.classList.toggle("card-conflict", state === "conflict");
+  div.classList.toggle("card-exhausted", state === "exhausted");
+  if (reason) div.title = reason; else div.removeAttribute("title");
+}
+
+// 左侧卡牌库里「已带满」的说明文案
+function cardsAtLimitReason(card) {
+  return (card && card.rarity === "LEGENDARY")
+    ? "传说卡只能带 1 张，已满"
+    : "已带满 2 张";
 }
 
 function refreshAllCardBadges() {
@@ -3106,8 +3143,8 @@ function renderDetail(c) {
 
   infoHtml += '<div class="detail-stats">';
   if (c.cost != null) infoHtml += '<div class="detail-stat"><span class="label">法力</span><span class="value">' + c.cost + '</span></div>';
-  if (c.attack != null) infoHtml += '<div class="detail-stat"><span class="label">攻击</span><span class="value">' + c.attack + '</span></div>';
-  if (c.health != null) infoHtml += '<div class="detail-stat"><span class="label">生命</span><span class="value">' + c.health + '</span></div>';
+  if (c.attack != null) infoHtml += '<div class="detail-stat stat-attack"><span class="stat-icon"><span class="value">' + c.attack + '</span></span><span class="label">攻击</span></div>';
+  if (c.health != null) infoHtml += '<div class="detail-stat stat-health"><span class="stat-icon"><span class="value">' + c.health + '</span></span><span class="label">生命</span></div>';
   if (c.durability != null) infoHtml += '<div class="detail-stat"><span class="label">耐久</span><span class="value">' + c.durability + '</span></div>';
   infoHtml += '</div>';
 
