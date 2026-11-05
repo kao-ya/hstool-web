@@ -1308,6 +1308,7 @@ const DEFAULT_SETTINGS = {
   // —— 功能 ——
   hoverPreview:       true,   // 悬停预览（OFF = 组卡器列表不弹卡图预览）
   crystalColor:       true,   // 水晶颜色（OFF = 统一为基准蓝水晶）
+  statPicture:        true,   // 属性用图片（OFF = 详情里的法力/攻击/生命改回纯文字）
   loadLog:            true,   // 显示加载日志浮层（调试用，可在设置→日志里关掉）
   // —— 布局 ——
   md3Style:           true,   // MD3 风格（OFF = 扁平化：小圆角 / 无阴影 / 无动效）
@@ -1379,6 +1380,8 @@ function applySettings() {
   b.classList.toggle("force-reduce-motion", settings.reduceMotion);
   // 关闭「水晶颜色」时，所有法力水晶统一回退到基准蓝色（见 CSS .crystal-mono）
   b.classList.toggle("crystal-mono", !settings.crystalColor);
+  // 关闭「属性用图片」→ 详情四个属性块去掉底图，退化成「标签 数值」纯文字
+  b.classList.toggle("stat-text-only", !settings.statPicture);
   // 加载日志浮层：OFF 时整块隐藏（日志仍记录在内存里，重新打开就能看到历史）
   const logBox = document.getElementById("loadLog");
   if (logBox) logBox.style.display = settings.loadLog ? "" : "none";

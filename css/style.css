@@ -3273,3 +3273,35 @@ body.no-border .kw-tip { border-color: transparent; }
     color: var(--muted-light);
     letter-spacing: 0.06em;
   }
+
+  /* —— 属性「纯文字」模式（设置 → 功能 → 属性用图片 关闭时）——
+     完全去掉底图，四个属性退化成一行「标签 数值」，不再有描边和位移补正。 */
+  body.stat-text-only .detail-stats { gap: 16px; }
+  body.stat-text-only .detail-stat.stat-mana,
+  body.stat-text-only .detail-stat.stat-attack,
+  body.stat-text-only .detail-stat.stat-health,
+  body.stat-text-only .detail-stat.stat-durability {
+    flex-direction: row;
+    justify-content: flex-start;  /* 左对齐，不随标签长度跳位，也不撑满整行 */
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 0;
+  }
+  body.stat-text-only .detail-stat .stat-icon {
+    width: auto;
+    height: auto;
+    display: inline-block;
+    background-image: none !important;
+    filter: none;
+    /* DOM 顺序是 value 在 label 前，用 order 换回「攻击 3」的读法 */
+    order: 2;
+  }
+  body.stat-text-only .detail-stat .stat-icon .value {
+    transform: none !important;   /* 底图没了，原先那点视觉补正反而会歪 */
+    font-size: 22px;
+    color: var(--text);
+    text-shadow: none;
+  }
+  body.stat-text-only .detail-stat .label { font-size: 13px; order: 1; }
+
