@@ -3186,9 +3186,6 @@ body.no-border .kw-tip { border-color: transparent; }
   .card-item .card-in-deck { z-index: 4; }
   /* 遮罩一律用滤镜（只改卡图像素，不叠加任何覆盖层：
      覆盖层会挡住左上角费用徽章，也会让名字条看着发闷） */
-  .card-item.card-conflict {
-    border-color: rgba(255, 96, 86, 0.9);
-  }
   .card-item.card-conflict > img {
     /* sepia 打底 + 色相往红偏 + 提高饱和：观感等同红色遮罩，但只作用于图片本身 */
     filter: sepia(0.7) hue-rotate(-24deg) saturate(2.2) brightness(0.86) contrast(1.03);
