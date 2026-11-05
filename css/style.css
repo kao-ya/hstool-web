@@ -3214,8 +3214,8 @@ body.no-border .kw-tip { border-color: transparent; }
     min-width: 64px;
   }
   .detail-stat .stat-icon {
-    width: 68px;
-    height: 68px;
+    width: 56px;
+    height: 56px;
     display: grid;
     place-items: center;
     background-repeat: no-repeat;
@@ -3233,7 +3233,7 @@ body.no-border .kw-tip { border-color: transparent; }
   .detail-stat.stat-health .value,
   .detail-stat.stat-durability .value {
     font-family: "Belwe", "Cinzel", "Times New Roman", serif;
-    font-size: 34px;
+    font-size: 40px;
     font-weight: 800;
     line-height: 1;
     color: #ffffff;
@@ -3250,7 +3250,7 @@ body.no-border .kw-tip { border-color: transparent; }
       0 -1.5px 0 rgba(0, 0, 0, 0.85),
       0 0 10px rgba(0, 0, 0, 0.7);
   }
-  .detail-stat.stat-attack .stat-icon .value { transform: translate(0, 2px); }
+  .detail-stat.stat-attack .stat-icon .value { transform: translate(3px, 6px); }
   .detail-stat.stat-health .stat-icon .value { transform: translate(0, 3px); }
   .detail-stat.stat-mana .stat-icon .value { transform: translate(0, 0); }
   .detail-stat.stat-durability .stat-icon .value { transform: translate(0, 0); }
