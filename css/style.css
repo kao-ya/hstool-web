@@ -2415,6 +2415,11 @@
     border-bottom: none;
     padding-bottom: 2px;
   }
+  /* 子行隐藏（悬停预览关闭）时没有下一行接着，父行要自己补回分割线 */
+  .settings-row.is-group-head.is-solo {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 14px;
+  }
   .settings-row.is-sub {
     position: relative;
     padding: 2px 0 12px 26px;

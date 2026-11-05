@@ -1389,6 +1389,9 @@ function applySettings() {
   // 悬停预览关闭 → 把「悬停预览滑动」整行藏起来（功能都不可用了，留着只会误导）
   const slideRow = document.getElementById("rowHoverSlide");
   if (slideRow) slideRow.classList.toggle("hidden", !settings.hoverPreview);
+  // 子行被藏起来时父行补回分割线（否则「悬停预览」和下一项之间会断开）
+  const slideHead = slideRow && slideRow.previousElementSibling;
+  if (slideHead) slideHead.classList.toggle("is-solo", !settings.hoverPreview);
   // 关掉 3D 时把已经倾斜的卡图立刻扶正，否则要等下一次鼠标移出才回正
   if (!settings.detail3d) {
     document.querySelectorAll(".detail-img").forEach((el) => {
