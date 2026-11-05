@@ -2768,7 +2768,28 @@ body.no-border .kw-tip { border-color: transparent; }
   }
   .poster-actions .btn { min-width: 88px; justify-content: center; }
 
-  /* 落地时目标行极轻地泛一下蓝（不发光、不闪白），明确「收到哪去了」 */
+  /* ============================================================
+     加入卡组的飞入动画（正式的卡面浮层，从卡牌库飞到卡组列表）
+     ============================================================ */
+  .fly-card {
+    position: fixed;
+    z-index: 10060;
+    pointer-events: none;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+    will-change: transform, opacity;
+  }
+  .fly-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* 落地时目标行闪一下，明确「收到哪去了」 */
+  .deck-row.fly-arrive { animation: deckRowArrive 0.44s ease-out; }
+  @keyframes deckRowArrive {
+    0%   { background-color: color-mix(in srgb, var(--primary) 26%, transparent); }
+    100% { background-color: transparent; }
+  }
+  body.force-reduce-motion .fly-card { display: none; }
+
   /* ============================================================
      粒子特效画布（清空卡组的散开效果）
      ============================================================ */
@@ -2782,13 +2803,43 @@ body.no-border .kw-tip { border-color: transparent; }
   /* ============================================================
      加卡飞行：官方那种「卡面变蓝发光」
      ============================================================ */
+  .fly-card {
+    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
+                0 0 28px rgba(74, 163, 255, 0.8),
+                0 14px 30px rgba(0, 0, 0, 0.45);
+    isolation: isolate;
+  }
+  .fly-card img {
+    filter: saturate(1.2) brightness(1.06) contrast(1.02);
+  }
+  .fly-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+      linear-gradient(160deg, rgba(86, 170, 255, 0.5) 0%, rgba(38, 118, 226, 0.22) 46%, rgba(86, 170, 255, 0.04) 100%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+  }
+
   /* 落地时整行泛蓝（覆盖此前的主色版本） */
   .deck-row.fly-arrive {
-    animation: deckRowArriveBlue 0.42s ease-out;
+    animation: deckRowArriveBlue 0.5s ease-out;
   }
   @keyframes deckRowArriveBlue {
-    0%   { background-color: rgba(96, 176, 255, 0.14); }
-    100% { background-color: transparent; }
+    0% {
+      background-color: rgba(74, 163, 255, 0.34);
+      box-shadow: inset 0 0 0 1.5px rgba(96, 176, 255, 0.9), 0 0 18px rgba(74, 163, 255, 0.55);
+    }
+    55% {
+      background-color: rgba(74, 163, 255, 0.16);
+      box-shadow: inset 0 0 0 1px rgba(96, 176, 255, 0.5), 0 0 10px rgba(74, 163, 255, 0.28);
+    }
+    100% {
+      background-color: transparent;
+      box-shadow: none;
+    }
   }
 
   /* ============================================================
@@ -2978,8 +3029,9 @@ body.no-border .kw-tip { border-color: transparent; }
     pointer-events: none;
     border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.85),
-                0 8px 18px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 0 0 1.5px rgba(96, 176, 255, 0.95),
+                0 0 22px rgba(74, 163, 255, 0.7),
+                0 10px 24px rgba(0, 0, 0, 0.45);
     will-change: transform, opacity;
     isolation: isolate;
   }
@@ -3037,73 +3089,3 @@ body.no-border .kw-tip { border-color: transparent; }
     flex: 0 0 auto;
   }
 }
-
-/* ===== LOADLOG（测试用·临时）：左侧加载日志 ===== */
-#loadLog {
-  position: fixed;
-  left: 0;
-  top: 72px;
-  width: 232px;
-  max-height: 62vh;
-  display: flex;
-  flex-direction: column;
-  z-index: 60;
-  background: rgba(12, 10, 14, 0.82);
-  color: #e8e2d8;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-left: none;
-  border-radius: 0 10px 10px 0;
-  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
-  user-select: text;
-}
-#loadLog.collapsed #llList { display: none; }
-#loadLog .ll-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 8px 6px 10px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  opacity: 0.9;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-}
-#loadLog .ll-head button {
-  width: 18px;
-  height: 18px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  color: inherit;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  border-radius: 4px;
-}
-#loadLog ol {
-  list-style: none;
-  margin: 0;
-  padding: 4px 6px 8px;
-  overflow-y: auto;
-  max-height: 58vh;
-}
-#loadLog li {
-  padding: 1px 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0.92;
-}
-#loadLog li b {
-  font-weight: 400;
-  opacity: 0.5;
-  margin-right: 5px;
-}
-#loadLog li.ll-db { color: #ffd79a; }
-#loadLog li.ll-ok { color: #a8e6b0; }
-#loadLog li.ll-img { color: #a9c8f5; }
-#loadLog li.ll-hov { color: #d9b8f2; }
-#loadLog li.ll-err { color: #f3a7a3; }
-body.no-border #loadLog { border-color: transparent; }
