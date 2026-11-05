@@ -1154,6 +1154,10 @@
   @media (max-width: 800px) { .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
   .card-item {
+    /* 两行 grid：第 1 行卡面（img 与 .card-veil 叠在同一格），第 2 行名字条 */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
     border-radius: var(--shape-lg);
     overflow: hidden;
     cursor: pointer;
@@ -1178,6 +1182,8 @@
      内边距）；想放大到 260px 宽（约 1.5 倍）需要 43px 横向内边距，不现实。
      所以这里只保留轻量抬升反馈。 */
   .card-item img {
+    grid-row: 1;
+    grid-column: 1;
     width: 100%;
     display: block;
     background: transparent;
@@ -1188,6 +1194,8 @@
     object-fit: cover;
   }
   .card-item .card-name {
+    grid-row: 2;
+    grid-column: 1;
     padding: 6px 8px;
     font-size: 13px;
     font-weight: 600;
@@ -3176,23 +3184,29 @@ body.no-border .kw-tip { border-color: transparent; }
      ============================================================ */
   .card-item .card-add-btn { z-index: 4; }
   .card-item .card-in-deck { z-index: 4; }
-  .card-item.card-conflict::after,
-  .card-item.card-exhausted::after {
-    content: "";
-    position: absolute;
-    inset: 0;
+  /* 绝对定位的 grid 子元素，包含块 = 它所在的网格格（第 1 行 = 卡面），
+     所以 inset: 0 只覆盖卡面，名字条不受影响。 */
+  .card-item .card-veil {
+    /* 与 img 挤在同一格、走正常流：高度 = 该行高度 = 卡面高度，不碰名字条。
+       （试过 position:absolute + inset:0，Chrome 里包含块成了整个卡片，会盖住名字条） */
+    grid-row: 1;
+    grid-column: 1;
+    position: relative;
     z-index: 2;
     pointer-events: none;
-    border-radius: inherit;
+    opacity: 0;
+    transition: opacity var(--motion-short);
   }
-  .card-item.card-conflict::after {
+  .card-item.card-conflict .card-veil {
+    opacity: 1;
     background: rgba(214, 48, 40, 0.44);
     box-shadow: inset 0 0 0 2px rgba(255, 96, 86, 0.92);
   }
   .card-item.card-conflict > img {
     filter: grayscale(0.4) brightness(0.82) saturate(0.9);
   }
-  .card-item.card-exhausted::after {
+  .card-item.card-exhausted .card-veil {
+    opacity: 1;
     background: rgba(10, 9, 8, 0.56);
   }
   .card-item.card-exhausted > img {
@@ -3205,8 +3219,10 @@ body.no-border .kw-tip { border-color: transparent; }
      卡牌详情：攻击 / 生命 用 gj.png / xie.png 做底，数字压在上面
      （图 68×68 带透明通道，按 contain 缩放；数字用 Belwe + 描边保证可读）
      ============================================================ */
+  .detail-stat.stat-mana,
   .detail-stat.stat-attack,
-  .detail-stat.stat-health {
+  .detail-stat.stat-health,
+  .detail-stat.stat-durability {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3226,18 +3242,25 @@ body.no-border .kw-tip { border-color: transparent; }
     background-size: contain;
     filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
   }
+  .detail-stat.stat-mana .stat-icon { background-image: url("../img/manacrystal.png"); }
   .detail-stat.stat-attack .stat-icon { background-image: url("../img/stat-attack.png"); }
   .detail-stat.stat-health .stat-icon { background-image: url("../img/stat-health.png"); }
+  .detail-stat.stat-durability .stat-icon { background-image: none; }
 
+  .detail-stat.stat-mana .value,
   .detail-stat.stat-attack .value,
-  .detail-stat.stat-health .value {
+  .detail-stat.stat-health .value,
+  .detail-stat.stat-durability .value {
     font-family: "Belwe", "Cinzel", "Times New Roman", serif;
     font-size: 28px;
     font-weight: 800;
     line-height: 1;
     color: #ffffff;
     letter-spacing: 0.5px;
-    transform: translateY(-1px);
+    /* 数字压在图上时按「图形视觉重心」微移，避免看着偏上/偏左。
+       数值来自 measure_icons.mjs 实测（alpha 质心与包围盒中心取中）：
+       attack 质心 53.2%/56.2%、health 49.4%/58.0%、mana 50.6%/50.8%。 */
+    transform: translate(0, -1px);
     /* 三层描边 + 外发光：浅底深底都读得清 */
     text-shadow:
       0 2px 0 rgba(0, 0, 0, 0.9),
@@ -3246,8 +3269,15 @@ body.no-border .kw-tip { border-color: transparent; }
       0 -1.5px 0 rgba(0, 0, 0, 0.85),
       0 0 10px rgba(0, 0, 0, 0.7);
   }
+  .detail-stat.stat-attack .stat-icon .value { transform: translate(2px, 2px); }
+  .detail-stat.stat-health .stat-icon .value { transform: translate(0, 3px); }
+  .detail-stat.stat-mana .stat-icon .value { transform: translate(0, 0); }
+  .detail-stat.stat-durability .stat-icon .value { transform: translate(0, 0); }
+
+  .detail-stat.stat-mana .label,
   .detail-stat.stat-attack .label,
-  .detail-stat.stat-health .label {
+  .detail-stat.stat-health .label,
+  .detail-stat.stat-durability .label {
     font-size: 11px;
     color: var(--muted-light);
     letter-spacing: 0.06em;

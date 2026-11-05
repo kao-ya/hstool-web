@@ -2966,6 +2966,12 @@ function createCardElement(card, index) {
   name.textContent = card.name;
 
   div.appendChild(img);
+  // 遮罩只盖卡面（不含底部名字条）：作为 grid 第 1 行的绝对定位子元素，
+  // 包含块就是「卡面那一格」，所以高度自动等于卡面，不用 JS 量。
+  const veil = document.createElement("div");
+  veil.className = "card-veil";
+  veil.setAttribute("aria-hidden", "true");
+  div.appendChild(veil);
   div.appendChild(cost);
   div.appendChild(name);
 
@@ -3142,10 +3148,10 @@ function renderDetail(c) {
             + (isCollectible(c) ? ' · <span style="color:#5c8a5f">可收藏</span>' : ' · <span style="color:#a8977d">不可收藏</span>') + '</div>';
 
   infoHtml += '<div class="detail-stats">';
-  if (c.cost != null) infoHtml += '<div class="detail-stat"><span class="label">法力</span><span class="value">' + c.cost + '</span></div>';
+  if (c.cost != null) infoHtml += '<div class="detail-stat stat-mana"><span class="stat-icon"><span class="value">' + c.cost + '</span></span><span class="label">法力</span></div>';
   if (c.attack != null) infoHtml += '<div class="detail-stat stat-attack"><span class="stat-icon"><span class="value">' + c.attack + '</span></span><span class="label">攻击</span></div>';
   if (c.health != null) infoHtml += '<div class="detail-stat stat-health"><span class="stat-icon"><span class="value">' + c.health + '</span></span><span class="label">生命</span></div>';
-  if (c.durability != null) infoHtml += '<div class="detail-stat"><span class="label">耐久</span><span class="value">' + c.durability + '</span></div>';
+  if (c.durability != null) infoHtml += '<div class="detail-stat stat-durability"><span class="stat-icon"><span class="value">' + c.durability + '</span></span><span class="label">耐久</span></div>';
   infoHtml += '</div>';
 
   // 英文模式下优先用英文原文；没拿到就退回中文（不外加关键词浮层，避免中英混排）
