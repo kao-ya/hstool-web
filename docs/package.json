@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vitepress dev --port 5199",
     "build": "vitepress build",
-    "preview": "vitepress preview --port 5200"
+    "preview": "vitepress preview --port 5200",
+    "deploy": "vitepress build && npx wrangler@4 pages deploy .vitepress/dist --project-name hstool-docs --branch main"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"
