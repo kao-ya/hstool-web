@@ -11,6 +11,7 @@
     "deploy": "vitepress build && npx wrangler@4 pages deploy .vitepress/dist --project-name hstool-docs --branch main"
   },
   "devDependencies": {
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vitepress-theme-teek": "^1.6.2"
   }
 }
