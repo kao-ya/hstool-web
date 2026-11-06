@@ -1,0 +1,101 @@
+/* HsTool 文档站 · 品牌配色（与 hstool.pages.dev 同一套暗金） */
+
+:root {
+  --vp-c-brand-1: #c9a227;
+  --vp-c-brand-2: #b8893a;
+  --vp-c-brand-3: #a5761f;
+  --vp-c-brand-soft: rgba(201, 162, 39, 0.14);
+
+  --vp-c-bg-soft: #f7f4ee;
+  --vp-c-divider: rgba(160, 128, 64, 0.18);
+  --vp-c-gutter: rgba(160, 128, 64, 0.12);
+}
+
+.dark {
+  --vp-c-brand-1: #e3bd52;
+  --vp-c-brand-2: #c9a227;
+  --vp-c-brand-3: #b8893a;
+  --vp-c-brand-soft: rgba(227, 189, 82, 0.16);
+
+  --vp-c-bg: #14100c;
+  --vp-c-bg-alt: #1a1510;
+  --vp-c-bg-soft: #1e1812;
+  --vp-c-divider: rgba(212, 175, 110, 0.16);
+  --vp-c-gutter: rgba(212, 175, 110, 0.12);
+}
+
+/* 首页标题用站点同款渐层 */
+.VPHero .name .clip {
+  background: linear-gradient(120deg, #f0c169, #c9a227 45%, #8a6a1f);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* 特性卡做成「卡牌」质感 */
+.VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  background: linear-gradient(180deg, rgba(201, 162, 39, 0.06), transparent 60%);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.VPFeature:hover {
+  transform: translateY(-2px);
+  border-color: var(--vp-c-brand-2);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* 侧栏当前项：金色左边条 */
+.VPSidebarItem.is-active > .item > .link > .text {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+}
+
+/* 行内代码与代码块与站点详情弹窗同色系 */
+.vp-doc :not(pre) > code {
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+}
+
+/* 导航栏磨砂玻璃，和组卡器顶栏一致。
+   只加在 .VPNavBar 上：.VPNav 一旦有 backdrop-filter 就会成为 .VPNavScreen 的
+   包含块，手机端弹出菜单的 height 会被压成 0（点汉堡键什么都不出来）。 */
+.VPNavBar,
+.VPNavBar.home.top {
+  backdrop-filter: saturate(160%) blur(10px);
+}
+
+/* ---- 手机端 ---- */
+@media (max-width: 767px) {
+  /* 首页底部那块大空白：.VPHome 默认 margin-bottom 96px + footer 32px 内边距。
+     VitePress 的规则带 scoped 属性选择器（.VPHome[data-v-xxx]），所以这里用 #app 提权。 */
+  #app .VPHome {
+    margin-bottom: 8px;
+  }
+  #app .VPHero {
+    padding-top: 44px;
+    padding-bottom: 20px;
+  }
+  #app .VPFooter {
+    padding-top: 20px;
+    padding-bottom: 20px;
+  }
+  /* 弹出菜单铺满可视区 */
+  .VPNavScreen {
+    height: calc(100vh - var(--vp-nav-height));
+    padding-bottom: 24px;
+  }
+  .VPNavScreenMenuGroup {
+    border-bottom: 1px solid var(--vp-c-divider);
+  }
+  /* 侧边栏抽屉：投影 + 可滚动，点遮罩或链接都能收起（VitePress 原生行为） */
+  #app .VPSidebar {
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.28);
+    padding-bottom: 32px;
+  }
+  #app .VPSidebar .nav {
+    padding-bottom: 8px;
+  }
+  /* 正文左右留白收一点，给卡片更多宽度 */
+  #app .VPDoc {
+    padding: 16px 16px 32px;
+  }
+}
