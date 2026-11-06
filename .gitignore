@@ -29,6 +29,11 @@ node_modules/
 *.tar.gz
 *.7z
 
-# ---- 开发资料（不属于站点，保留 README）----
+# ---- 开发资料（不属于站点，保留 README 与文档站源码）----
 *.md
 !README.md
+!docs/**/*.md
+
+# ---- 文档站（VitePress）产物与缓存 ----
+docs/.vitepress/dist/
+docs/.vitepress/cache/
